@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ type Server struct {
 	logger       *slog.Logger
 	buildInfo    *BuildInfo
 	endorsements []*url.URL
+	certs        tlsCertificates
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -61,6 +63,13 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		endorsementStrs[i] = u.String()
 	}
 	logger.Debug("loaded endorsements", "count", len(endorsements), "urls", strings.Join(endorsementStrs, ","))
+
+	if err := validateTLSConfig(cfg); err != nil {
+		return nil, fmt.Errorf("TLS configuration: %w", err)
+	}
+	if err := s.loadCertificates(); err != nil {
+		return nil, err
+	}
 
 	s.app = fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -119,6 +128,17 @@ func loadEndorsements(path string) ([]*url.URL, error) {
 
 // Run starts the HTTP listener and blocks until ctx is cancelled or a fatal error occurs.
 func (s *Server) Run(ctx context.Context) error {
+	if s.cfg.PublicTLSCertPath != "" {
+		if err := s.watchCertDir(ctx, filepath.Dir(s.cfg.PublicTLSCertPath), "public", s.reloadPublicCert); err != nil {
+			return fmt.Errorf("public certificate watcher: %w", err)
+		}
+	}
+	if s.cfg.PrivateTLSCertPath != "" {
+		if err := s.watchCertDir(ctx, filepath.Dir(s.cfg.PrivateTLSCertPath), "private", s.reloadPrivateCert); err != nil {
+			return fmt.Errorf("private certificate watcher: %w", err)
+		}
+	}
+
 	addr := fmt.Sprintf("%s:%d", s.cfg.BindHost, s.cfg.BindPort)
 
 	listenErr := make(chan error, 1)

@@ -36,6 +36,10 @@ func init() {
 	rootCmd.Flags().String("log-level", "info", "log level (debug, info, warn, error)")
 	rootCmd.Flags().String("build-info-path", "/etc/build-info.json", "path to build information file")
 	rootCmd.Flags().String("endorsements-path", "/etc/endorsements.json", "path to endorsements URL list file")
+	rootCmd.Flags().String("public-tls-cert-path", "", "path to public TLS certificate (PEM)")
+	rootCmd.Flags().String("public-tls-key-path", "", "path to public TLS private key (PEM)")
+	rootCmd.Flags().String("private-tls-cert-path", "", "path to private TLS certificate (PEM)")
+	rootCmd.Flags().String("private-tls-key-path", "", "path to private TLS private key (PEM)")
 
 	_ = viper.BindPFlag("bind_host", rootCmd.Flags().Lookup("host"))
 	_ = viper.BindPFlag("bind_port", rootCmd.Flags().Lookup("port"))
@@ -43,6 +47,10 @@ func init() {
 	_ = viper.BindPFlag("log_level", rootCmd.Flags().Lookup("log-level"))
 	_ = viper.BindPFlag("build_info_path", rootCmd.Flags().Lookup("build-info-path"))
 	_ = viper.BindPFlag("endorsements_path", rootCmd.Flags().Lookup("endorsements-path"))
+	_ = viper.BindPFlag("public_tls_cert_path", rootCmd.Flags().Lookup("public-tls-cert-path"))
+	_ = viper.BindPFlag("public_tls_key_path", rootCmd.Flags().Lookup("public-tls-key-path"))
+	_ = viper.BindPFlag("private_tls_cert_path", rootCmd.Flags().Lookup("private-tls-cert-path"))
+	_ = viper.BindPFlag("private_tls_key_path", rootCmd.Flags().Lookup("private-tls-key-path"))
 }
 
 func initConfig() {
@@ -59,6 +67,10 @@ func initConfig() {
 	_ = viper.BindEnv("log_level", "LOG_LEVEL")
 	_ = viper.BindEnv("build_info_path", "BUILD_INFO_PATH")
 	_ = viper.BindEnv("endorsements_path", "ENDORSEMENTS_PATH")
+	_ = viper.BindEnv("public_tls_cert_path", "PUBLIC_TLS_CERT_PATH")
+	_ = viper.BindEnv("public_tls_key_path", "PUBLIC_TLS_KEY_PATH")
+	_ = viper.BindEnv("private_tls_cert_path", "PRIVATE_TLS_CERT_PATH")
+	_ = viper.BindEnv("private_tls_key_path", "PRIVATE_TLS_KEY_PATH")
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
