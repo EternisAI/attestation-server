@@ -95,14 +95,18 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	// Collect attestation evidence.
 	// NitroNSM is exclusive and returns immediately.
 	if s.cfg.ReportEvidence.NitroNSM {
-		doc, err := s.attestNitroNSM(digest[:])
+		blob, err := s.attestNitroNSM(digest[:])
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitro nsm attestation: %v", err))
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
+		}
+		doc, err := verifyNitroAttestation(blob, digest[:])
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
 		}
 		report := &AttestationReport{
 			Data: reportData,
 			Evidence: []*AttestationEvidence{
-				{Kind: "nitronsm", Blob: doc},
+				{Kind: "nitronsm", Blob: blob, Data: nitroAttestationData(doc)},
 			},
 		}
 		c.Set("Content-Type", "application/json")
@@ -117,11 +121,11 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
 		}
-		attData, err := verifyNitroTPMAttestation(blob, digest[:])
+		doc, err := verifyNitroAttestation(blob, digest[:])
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
 		}
-		evidence = append(evidence, &AttestationEvidence{Kind: "nitrotpm", Blob: blob, Data: attData})
+		evidence = append(evidence, &AttestationEvidence{Kind: "nitrotpm", Blob: blob, Data: nitroAttestationData(doc)})
 	}
 
 	if len(evidence) == 0 {

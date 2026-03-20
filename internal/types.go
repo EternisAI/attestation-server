@@ -1,7 +1,5 @@
 package app
 
-import "time"
-
 // Fields sourced from: https://github.com/sigstore/fulcio/blob/v1.8.5/pkg/certificate/extensions.go#L60
 type BuildInfo struct {
 	// Reference to specific build instructions that are responsible for signing.
@@ -59,31 +57,6 @@ type AttestationEvidence struct {
 	Kind string `json:"kind"`
 	Blob []byte `json:"blob"`
 	Data any    `json:"data,omitempty"`
-}
-
-// NitroTPMAttestationDocument is the full deserialized NitroTPM attestation
-// document as defined by the AWS spec:
-// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/nitrotpm-attestation-document-validate.html#doc-def
-type NitroTPMAttestationDocument struct {
-	ModuleID     string         `cbor:"module_id"`
-	Timestamp    uint64         `cbor:"timestamp"`
-	Digest       string         `cbor:"digest"`
-	NitroTPMPCRs map[int][]byte `cbor:"nitrotpm_pcrs"`
-	Certificate  []byte         `cbor:"certificate"`
-	CABundle     [][]byte       `cbor:"cabundle"`
-	PublicKey    []byte         `cbor:"public_key"`
-	UserData     []byte         `cbor:"user_data"`
-	Nonce        []byte         `cbor:"nonce"`
-}
-
-// NitroTPMAttestationData contains select fields from a verified NitroTPM
-// attestation document, included in the API response for convenience.
-type NitroTPMAttestationData struct {
-	Module       string         `json:"module"`
-	Timestamp    time.Time      `json:"timestamp"`
-	Digest       string         `json:"digest"`
-	NitroTPMPCRs map[int][]byte `json:"nitrotpm_pcrs"`
-	Nonce        []byte         `json:"nonce,omitempty"`
 }
 
 type AttestationReportData struct {
