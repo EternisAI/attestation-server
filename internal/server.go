@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -13,14 +17,50 @@ import (
 
 // Server wraps a Fiber application with its dependencies.
 type Server struct {
-	app    *fiber.App
-	cfg    *Config
-	logger *slog.Logger
+	app       *fiber.App
+	cfg       *Config
+	logger    *slog.Logger
+	buildInfo    *BuildInfo
+	endorsements []*url.URL
 }
 
 // NewServer constructs a Server with middleware and routes configured.
-func NewServer(cfg *Config, logger *slog.Logger) *Server {
+func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	s := &Server{cfg: cfg, logger: logger}
+
+	bi, err := loadBuildInfo(cfg.BuildInfoPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading build info: %w", err)
+	}
+	s.buildInfo = bi
+	logger.Debug("loaded build info",
+		"build_signer_uri", bi.BuildSignerURI,
+		"build_signer_digest", bi.BuildSignerDigest,
+		"runner_environment", bi.RunnerEnvironment,
+		"source_repository_uri", bi.SourceRepositoryURI,
+		"source_repository_digest", bi.SourceRepositoryDigest,
+		"source_repository_ref", bi.SourceRepositoryRef,
+		"source_repository_identifier", bi.SourceRepositoryIdentifier,
+		"source_repository_owner_uri", bi.SourceRepositoryOwnerURI,
+		"source_repository_owner_identifier", bi.SourceRepositoryOwnerIdentifier,
+		"build_config_uri", bi.BuildConfigURI,
+		"build_config_digest", bi.BuildConfigDigest,
+		"build_trigger", bi.BuildTrigger,
+		"run_invocation_uri", bi.RunInvocationURI,
+		"source_repository_visibility", bi.SourceRepositoryVisibility,
+		"deployment_environment", bi.DeploymentEnvironment,
+	)
+
+	endorsements, err := loadEndorsements(cfg.EndorsementsPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading endorsements: %w", err)
+	}
+	s.endorsements = endorsements
+	endorsementStrs := make([]string, len(endorsements))
+	for i, u := range endorsements {
+		endorsementStrs[i] = u.String()
+	}
+	logger.Debug("loaded endorsements", "count", len(endorsements), "urls", strings.Join(endorsementStrs, ","))
 
 	s.app = fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -31,7 +71,48 @@ func NewServer(cfg *Config, logger *slog.Logger) *Server {
 	s.app.Use(s.accessLog())
 	s.setupRoutes()
 
-	return s
+	return s, nil
+}
+
+func loadBuildInfo(path string) (*BuildInfo, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading file %s: %w", path, err)
+	}
+	var bi BuildInfo
+	if err := json.Unmarshal(data, &bi); err != nil {
+		return nil, fmt.Errorf("unmarshalling build info: %w", err)
+	}
+	return &bi, nil
+}
+
+func loadEndorsements(path string) ([]*url.URL, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading file %s: %w", path, err)
+	}
+	var raw []string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("unmarshalling endorsements: %w", err)
+	}
+	urls := make([]*url.URL, 0, len(raw))
+	for i, s := range raw {
+		u, err := url.Parse(s)
+		if err != nil {
+			return nil, fmt.Errorf("endorsement %d: invalid URL %q: %w", i, s, err)
+		}
+		if u.Scheme != "https" {
+			return nil, fmt.Errorf("endorsement %d: scheme must be https, got %q", i, u.Scheme)
+		}
+		if u.Host == "" {
+			return nil, fmt.Errorf("endorsement %d: missing host in %q", i, s)
+		}
+		if u.Path == "" || u.Path == "/" {
+			return nil, fmt.Errorf("endorsement %d: missing path in %q", i, s)
+		}
+		urls = append(urls, u)
+	}
+	return urls, nil
 }
 
 // Run starts the HTTP listener and blocks until ctx is cancelled or a fatal error occurs.

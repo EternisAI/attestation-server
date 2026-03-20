@@ -16,6 +16,7 @@ cmd/root.go          # cobra root command; initializes config, logger, and start
 internal/config.go   # Config struct and LoadConfig() (package app)
 internal/logging.go  # NewLogger() (package app)
 internal/server.go   # Server, NewServer(), Run() (package app)
+internal/types.go    # BuildInfo struct (package app)
 ```
 
 ## Configuration
@@ -28,6 +29,8 @@ All configuration is via environment variables. Some options also have CLI flag 
 | `BIND_PORT`  | `--port`         | `8187`      | HTTP bind port           |
 | `LOG_FORMAT` | `--log-format`   | `json`      | Log format: `json`/`text`|
 | `LOG_LEVEL`  | `--log-level`    | `info`      | Log level: `debug`/`info`/`warn`/`error` |
+| `BUILD_INFO_PATH` | `--build-info-path` | `/etc/build-info.json` | Path to build information file |
+| `ENDORSEMENTS_PATH` | `--endorsements-path` | `/etc/endorsements.json` | Path to endorsements URL list file |
 
 ## Logging conventions
 

@@ -34,11 +34,15 @@ func init() {
 	rootCmd.Flags().Int("port", 8187, "bind port number")
 	rootCmd.Flags().String("log-format", "json", "log format (json, text)")
 	rootCmd.Flags().String("log-level", "info", "log level (debug, info, warn, error)")
+	rootCmd.Flags().String("build-info-path", "/etc/build-info.json", "path to build information file")
+	rootCmd.Flags().String("endorsements-path", "/etc/endorsements.json", "path to endorsements URL list file")
 
 	_ = viper.BindPFlag("bind_host", rootCmd.Flags().Lookup("host"))
 	_ = viper.BindPFlag("bind_port", rootCmd.Flags().Lookup("port"))
 	_ = viper.BindPFlag("log_format", rootCmd.Flags().Lookup("log-format"))
 	_ = viper.BindPFlag("log_level", rootCmd.Flags().Lookup("log-level"))
+	_ = viper.BindPFlag("build_info_path", rootCmd.Flags().Lookup("build-info-path"))
+	_ = viper.BindPFlag("endorsements_path", rootCmd.Flags().Lookup("endorsements-path"))
 }
 
 func initConfig() {
@@ -46,11 +50,15 @@ func initConfig() {
 	viper.SetDefault("bind_port", 8187)
 	viper.SetDefault("log_format", "json")
 	viper.SetDefault("log_level", "info")
+	viper.SetDefault("build_info_path", "/etc/build-info.json")
+	viper.SetDefault("endorsements_path", "/etc/endorsements.json")
 
 	_ = viper.BindEnv("bind_host", "BIND_HOST")
 	_ = viper.BindEnv("bind_port", "BIND_PORT")
 	_ = viper.BindEnv("log_format", "LOG_FORMAT")
 	_ = viper.BindEnv("log_level", "LOG_LEVEL")
+	_ = viper.BindEnv("build_info_path", "BUILD_INFO_PATH")
+	_ = viper.BindEnv("endorsements_path", "ENDORSEMENTS_PATH")
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
@@ -73,7 +81,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	srv := app.NewServer(cfg, logger)
+	srv, err := app.NewServer(cfg, logger)
+	if err != nil {
+		logger.Error("failed to initialize server", "error", err)
+		os.Exit(1)
+	}
 	if err := srv.Run(ctx); err != nil {
 		logger.Error("server stopped", "error", err)
 		return err
