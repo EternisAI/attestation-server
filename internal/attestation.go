@@ -92,7 +92,8 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 
 	digest := sha512.Sum512(data)
 
-	// Collect attestation evidence
+	// Collect attestation evidence.
+	// NitroNSM is exclusive and returns immediately.
 	if s.cfg.ReportEvidence.NitroNSM {
 		doc, err := s.attestNitroNSM(digest[:])
 		if err != nil {
@@ -108,7 +109,35 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		return c.JSON(report)
 	}
 
-	return fiber.ErrNotImplemented
+	// Non-exclusive evidence types can be combined.
+	var evidence []*AttestationEvidence
+
+	if s.cfg.ReportEvidence.NitroTPM {
+		doc, err := s.attestNitroTPM(digest[:])
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitro tpm attestation: %v", err))
+		}
+		evidence = append(evidence, &AttestationEvidence{Kind: "nitrotpm", Data: doc})
+	}
+
+	if len(evidence) == 0 {
+		return fiber.ErrNotImplemented
+	}
+
+	report := &AttestationReport{
+		Data:     reportData,
+		Evidence: evidence,
+	}
+	c.Set("Content-Type", "application/json")
+	return c.JSON(report)
+}
+
+func (s *Server) attestNitroTPM(nonce []byte) ([]byte, error) {
+	doc, err := s.nitroTPM.Attest(nonce)
+	if err != nil {
+		return nil, fmt.Errorf("tpm attestation request failed: %w", err)
+	}
+	return doc, nil
 }
 
 func (s *Server) attestNitroNSM(nonce []byte) ([]byte, error) {

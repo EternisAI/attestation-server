@@ -29,6 +29,7 @@ type Server struct {
 	certs        tlsCertificates
 	nsm          *nsm.Session
 	nsmMu        sync.Mutex
+	nitroTPM     *NitroTPM
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -83,6 +84,15 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		}
 		s.nsm = sess
 		logger.Info("opened nitro nsm session")
+	}
+
+	if cfg.ReportEvidence.NitroTPM {
+		tpm, err := OpenNitroTPM()
+		if err != nil {
+			return nil, fmt.Errorf("opening nitro tpm: %w", err)
+		}
+		s.nitroTPM = tpm
+		logger.Info("opened nitro tpm device")
 	}
 
 	s.app = fiber.New(fiber.Config{
