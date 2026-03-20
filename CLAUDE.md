@@ -19,6 +19,7 @@ internal/logging.go        # NewLogger() (package app)
 internal/nitro.go          # Shared Nitro attestation: COSE_Sign1 verification, cert chain validation, embedded AWS Nitro root CA (package app)
 internal/nitrotpm.go       # NitroTPM device access and attestation via raw TPM2 protocol over /dev/tpm0 (package app)
 internal/sevsnp.go         # SEV-SNP device access, attestation via go-sev-guest, signature verification, report parsing (package app)
+internal/tdx.go            # Intel TDX device access, attestation via go-tdx-guest, quote verification, report parsing (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS certificate loading and hot-reload (package app)
 internal/types.go          # BuildInfo, AttestationReport, AttestationReportData, and other shared structs (package app)
@@ -57,6 +58,7 @@ nitronsm    = false
 nitrotpm    = false
 sevsnp      = false
 sevsnp_vmpl = 0
+tdx         = false
 
 [report.user_data]
 env = []
@@ -101,6 +103,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_NITROTPM` | `report.evidence.nitrotpm` | `false` | Enable Nitro TPM evidence |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP` | `report.evidence.sevsnp` | `false` | Enable SEV-SNP evidence |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP_VMPL` | `report.evidence.sevsnp_vmpl` | `0` | VMPL level for SEV-SNP attestation (0–3) |
+| `ATTESTATION_SERVER_REPORT_EVIDENCE_TDX` | `report.evidence.tdx` | `false` | Enable Intel TDX evidence (exclusive: cannot combine with others) |
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Environment variable names to include in report (unique) |
 
 ## Logging conventions

@@ -56,6 +56,7 @@ func initConfig() {
 	viper.SetDefault("report.evidence.nitrotpm", false)
 	viper.SetDefault("report.evidence.sevsnp", false)
 	viper.SetDefault("report.evidence.sevsnp_vmpl", 0)
+	viper.SetDefault("report.evidence.tdx", false)
 
 	// Explicit environment variable bindings (avoids AutomaticEnv underscore ambiguity)
 	_ = viper.BindEnv("log.format", "ATTESTATION_SERVER_LOG_FORMAT")
@@ -72,6 +73,7 @@ func initConfig() {
 	_ = viper.BindEnv("report.evidence.nitrotpm", "ATTESTATION_SERVER_REPORT_EVIDENCE_NITROTPM")
 	_ = viper.BindEnv("report.evidence.sevsnp", "ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP")
 	_ = viper.BindEnv("report.evidence.sevsnp_vmpl", "ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP_VMPL")
+	_ = viper.BindEnv("report.evidence.tdx", "ATTESTATION_SERVER_REPORT_EVIDENCE_TDX")
 	_ = viper.BindEnv("report.user_data.env", "ATTESTATION_SERVER_REPORT_USER_DATA_ENV")
 
 	// Config file resolution: flag > env var > fallback paths

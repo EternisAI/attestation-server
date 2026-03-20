@@ -93,7 +93,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	digest := sha512.Sum512(data)
 
 	// Collect attestation evidence.
-	// NitroNSM is exclusive and returns immediately.
+	// NitroNSM and TDX are exclusive and return immediately.
 	if s.cfg.ReportEvidence.NitroNSM {
 		blob, err := s.attestNitroNSM(digest[:])
 		if err != nil {
@@ -107,6 +107,21 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 			Data: reportData,
 			Evidence: []*AttestationEvidence{
 				{Kind: "nitronsm", Blob: blob, Data: nitroAttestationData(doc)},
+			},
+		}
+		c.Set("Content-Type", "application/json")
+		return c.JSON(report)
+	}
+
+	if s.cfg.ReportEvidence.TDX {
+		blob, quote, err := s.tdx.Attest(digest)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tdx: %v", err))
+		}
+		report := &AttestationReport{
+			Data: reportData,
+			Evidence: []*AttestationEvidence{
+				{Kind: "tdx", Blob: blob, Data: tdxAttestationData(quote)},
 			},
 		}
 		c.Set("Content-Type", "application/json")

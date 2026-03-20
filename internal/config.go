@@ -32,6 +32,7 @@ type EvidenceConfig struct {
 	NitroTPM   bool
 	SEVSNP     bool
 	SEVSNPVMPL int
+	TDX        bool
 }
 
 // LoadConfig reads configuration from viper (config file / env vars / pflags / defaults).
@@ -41,6 +42,7 @@ func LoadConfig() (*Config, error) {
 		NitroTPM:   viper.GetBool("report.evidence.nitrotpm"),
 		SEVSNP:     viper.GetBool("report.evidence.sevsnp"),
 		SEVSNPVMPL: viper.GetInt("report.evidence.sevsnp_vmpl"),
+		TDX:        viper.GetBool("report.evidence.tdx"),
 	}
 	if err := validateEvidence(evidence); err != nil {
 		return nil, err
@@ -67,11 +69,14 @@ func LoadConfig() (*Config, error) {
 }
 
 func validateEvidence(e EvidenceConfig) error {
-	if !e.NitroNSM && !e.NitroTPM && !e.SEVSNP {
+	if !e.NitroNSM && !e.NitroTPM && !e.SEVSNP && !e.TDX {
 		return fmt.Errorf("report.evidence: at least one evidence type must be enabled")
 	}
-	if e.NitroNSM && (e.NitroTPM || e.SEVSNP) {
+	if e.NitroNSM && (e.NitroTPM || e.SEVSNP || e.TDX) {
 		return fmt.Errorf("report.evidence: nitronsm cannot be combined with other evidence types")
+	}
+	if e.TDX && (e.NitroNSM || e.NitroTPM || e.SEVSNP) {
+		return fmt.Errorf("report.evidence: tdx cannot be combined with other evidence types")
 	}
 	return nil
 }
