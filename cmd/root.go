@@ -13,11 +13,11 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:          "attestation-server",
-	Short:        "TEE attestation document server",
+	Use:           "attestation-server",
+	Short:         "TEE attestation document server",
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	RunE:         runServer,
+	RunE:          runServer,
 }
 
 // Execute is the entry point called from main.
