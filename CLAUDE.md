@@ -53,9 +53,10 @@ build_info   = "/etc/build-info.json"
 endorsements = "/etc/endorsements.json"
 
 [report.evidence]
-nitronsm = false
-nitrotpm = false
-sevsnp   = false
+nitronsm    = false
+nitrotpm    = false
+sevsnp      = false
+sevsnp_vmpl = 0
 
 [report.user_data]
 env = []
@@ -99,6 +100,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_NITRONSM` | `report.evidence.nitronsm` | `false` | Enable Nitro NSM evidence (exclusive: cannot combine with others) |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_NITROTPM` | `report.evidence.nitrotpm` | `false` | Enable Nitro TPM evidence |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP` | `report.evidence.sevsnp` | `false` | Enable SEV-SNP evidence |
+| `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP_VMPL` | `report.evidence.sevsnp_vmpl` | `0` | VMPL level for SEV-SNP attestation (0–3) |
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Environment variable names to include in report (unique) |
 
 ## Logging conventions

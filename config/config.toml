@@ -13,9 +13,10 @@ build_info   = "/etc/build-info.json"
 endorsements = "/etc/endorsements.json"
 
 [report.evidence]
-nitronsm = false  # at least one must be true; nitronsm excludes all others
-nitrotpm = false
-sevsnp   = false
+nitronsm    = false  # at least one must be true; nitronsm excludes all others
+nitrotpm    = false
+sevsnp      = false
+sevsnp_vmpl = 0
 
 [report.user_data]
 env = []  # optional; environment variable names to include

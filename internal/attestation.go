@@ -137,7 +137,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		} else {
 			snpReportData = digest
 		}
-		blob, report, err := s.sevSNP.Attest(snpReportData)
+		blob, report, err := s.sevSNP.Attest(snpReportData, s.cfg.ReportEvidence.SEVSNPVMPL)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("sevsnp: %v", err))
 		}

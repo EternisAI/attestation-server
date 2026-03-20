@@ -37,13 +37,14 @@ func (s *SEVSNP) Close() error {
 }
 
 // Attest requests a SEV-SNP extended attestation report incorporating the given
-// report data at VMPL 0. It returns the concatenated raw report + certificate
-// table (parseable by abi.ReportCertsToProto) and the verified parsed report.
-func (s *SEVSNP) Attest(reportData [64]byte) ([]byte, *spb.Report, error) {
+// report data at the specified VMPL. It returns the concatenated raw report +
+// certificate table (parseable by abi.ReportCertsToProto) and the verified
+// parsed report.
+func (s *SEVSNP) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rawReport, certTable, err := client.GetRawExtendedReport(s.dev, reportData)
+	rawReport, certTable, err := client.GetRawExtendedReportAtVmpl(s.dev, reportData, vmpl)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sev-snp attestation request failed: %w", err)
 	}

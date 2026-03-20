@@ -28,17 +28,19 @@ type Config struct {
 
 // EvidenceConfig holds the evidence type flags.
 type EvidenceConfig struct {
-	NitroNSM bool
-	NitroTPM bool
-	SEVSNP   bool
+	NitroNSM   bool
+	NitroTPM   bool
+	SEVSNP     bool
+	SEVSNPVMPL int
 }
 
 // LoadConfig reads configuration from viper (config file / env vars / pflags / defaults).
 func LoadConfig() (*Config, error) {
 	evidence := EvidenceConfig{
-		NitroNSM: viper.GetBool("report.evidence.nitronsm"),
-		NitroTPM: viper.GetBool("report.evidence.nitrotpm"),
-		SEVSNP:   viper.GetBool("report.evidence.sevsnp"),
+		NitroNSM:   viper.GetBool("report.evidence.nitronsm"),
+		NitroTPM:   viper.GetBool("report.evidence.nitrotpm"),
+		SEVSNP:     viper.GetBool("report.evidence.sevsnp"),
+		SEVSNPVMPL: viper.GetInt("report.evidence.sevsnp_vmpl"),
 	}
 	if err := validateEvidence(evidence); err != nil {
 		return nil, err
