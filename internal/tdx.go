@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"sync"
 	"time"
@@ -11,6 +13,38 @@ import (
 	pb "github.com/google/go-tdx-guest/proto/tdx"
 	"github.com/google/go-tdx-guest/verify"
 )
+
+// intelSGXRootCAPEM is the Intel SGX Root CA certificate used to verify the
+// PCK certificate chain in TDX attestation quotes.
+// Downloaded from https://certificates.trustedservices.intel.com/IntelSGXRootCA.der
+// SHA-256 fingerprint: 44A0196B2B99F889B8E149E95B807A350E74249643998E85A7CBB8CCFAB674D3
+const intelSGXRootCAPEM = `-----BEGIN CERTIFICATE-----
+MIICjzCCAjSgAwIBAgIUImUM1lqdNInzg7SVUr9QGzknBqwwCgYIKoZIzj0EAwIw
+aDEaMBgGA1UEAwwRSW50ZWwgU0dYIFJvb3QgQ0ExGjAYBgNVBAoMEUludGVsIENv
+cnBvcmF0aW9uMRQwEgYDVQQHDAtTYW50YSBDbGFyYTELMAkGA1UECAwCQ0ExCzAJ
+BgNVBAYTAlVTMB4XDTE4MDUyMTEwNDUxMFoXDTQ5MTIzMTIzNTk1OVowaDEaMBgG
+A1UEAwwRSW50ZWwgU0dYIFJvb3QgQ0ExGjAYBgNVBAoMEUludGVsIENvcnBvcmF0
+aW9uMRQwEgYDVQQHDAtTYW50YSBDbGFyYTELMAkGA1UECAwCQ0ExCzAJBgNVBAYT
+AlVTMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEC6nEwMDIYZOj/iPWsCzaEKi7
+1OiOSLRFhWGjbnBVJfVnkY4u3IjkDYYL0MxO4mqsyYjlBalTVYxFP2sJBK5zlKOB
+uzCBuDAfBgNVHSMEGDAWgBQiZQzWWp00ifODtJVSv1AbOScGrDBSBgNVHR8ESzBJ
+MEegRaBDhkFodHRwczovL2NlcnRpZmljYXRlcy50cnVzdGVkc2VydmljZXMuaW50
+ZWwuY29tL0ludGVsU0dYUm9vdENBLmRlcjAdBgNVHQ4EFgQUImUM1lqdNInzg7SV
+Ur9QGzknBqwwDgYDVR0PAQH/BAQDAgEGMBIGA1UdEwEB/wQIMAYBAf8CAQEwCgYI
+KoZIzj0EAwIDSQAwRgIhAOW/5QkR+S9CiSDcNoowLuPRLsWGf/Yi7GSX94BgwTwg
+AiEA4J0lrHoMs+Xo5o/sX6O9QWxHRAvZUGOdRQ7cvqRXaqI=
+-----END CERTIFICATE-----`
+
+var intelSGXRootPool = func() *x509.CertPool {
+	block, _ := pem.Decode([]byte(intelSGXRootCAPEM))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		panic("parsing embedded Intel SGX root CA: " + err.Error())
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(cert)
+	return pool
+}()
 
 // TDX manages the TDX quote provider for attestation.
 // All access is serialized by an internal mutex for safe concurrent use.
@@ -59,9 +93,9 @@ func (t *TDX) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
 }
 
 // verifyTDXQuote parses the raw quote, verifies the ECDSA-P256 signature and
-// PCK certificate chain against Intel's embedded trust root (offline, no
-// collateral fetching or CRL check), and validates that the report data field
-// matches the expected value.
+// PCK certificate chain against the Intel SGX Root CA (offline, no collateral
+// fetching or CRL check), and validates that the report data field matches the
+// expected value.
 func verifyTDXQuote(rawQuote []byte, expectedReportData [64]byte) (*pb.QuoteV4, error) {
 	parsed, err := abi.QuoteToProto(rawQuote)
 	if err != nil {
@@ -76,6 +110,7 @@ func verifyTDXQuote(rawQuote []byte, expectedReportData [64]byte) (*pb.QuoteV4, 
 	opts := &verify.Options{
 		CheckRevocations: false,
 		GetCollateral:    false,
+		TrustedRoots:     intelSGXRootPool,
 		Now:              time.Now(),
 	}
 	if err := verify.TdxQuote(quote, opts); err != nil {
