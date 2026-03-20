@@ -102,7 +102,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		report := &AttestationReport{
 			Data: reportData,
 			Evidence: []*AttestationEvidence{
-				{Kind: "nitronsm", Data: doc},
+				{Kind: "nitronsm", Blob: doc},
 			},
 		}
 		c.Set("Content-Type", "application/json")
@@ -113,11 +113,15 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	var evidence []*AttestationEvidence
 
 	if s.cfg.ReportEvidence.NitroTPM {
-		doc, err := s.attestNitroTPM(digest[:])
+		blob, err := s.attestNitroTPM(digest[:])
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitro tpm attestation: %v", err))
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
 		}
-		evidence = append(evidence, &AttestationEvidence{Kind: "nitrotpm", Data: doc})
+		attData, err := verifyNitroTPMAttestation(blob, digest[:])
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
+		}
+		evidence = append(evidence, &AttestationEvidence{Kind: "nitrotpm", Blob: blob, Data: attData})
 	}
 
 	if len(evidence) == 0 {
