@@ -12,27 +12,31 @@ import (
 	"github.com/google/go-tdx-guest/verify"
 )
 
-// TDX manages the TDX guest device for attestation.
-// All device access is serialized by an internal mutex because the underlying
-// device issues multiple ioctls per quote request and has no built-in
-// synchronization.
+// TDX manages the TDX quote provider for attestation.
+// All access is serialized by an internal mutex for safe concurrent use.
 type TDX struct {
-	mu  sync.Mutex
-	dev client.Device
+	mu sync.Mutex
+	qp client.QuoteProvider
 }
 
-// OpenTDX opens the TDX guest device for attestation.
+// OpenTDX initializes the TDX quote provider for attestation.
+// It uses the ConfigFS-based QuoteProvider which is the non-deprecated path
+// supported by modern kernels (the legacy /dev/tdx_guest ioctl returns ENOTTY
+// for quote requests on these systems).
 func OpenTDX() (*TDX, error) {
-	dev, err := client.OpenDevice()
+	qp, err := client.GetQuoteProvider()
 	if err != nil {
-		return nil, fmt.Errorf("opening tdx device: %w", err)
+		return nil, fmt.Errorf("getting tdx quote provider: %w", err)
 	}
-	return &TDX{dev: dev}, nil
+	if err := qp.IsSupported(); err != nil {
+		return nil, fmt.Errorf("tdx quote provider not supported: %w", err)
+	}
+	return &TDX{qp: qp}, nil
 }
 
-// Close closes the TDX guest device.
+// Close is a no-op; the ConfigFS quote provider holds no persistent resources.
 func (t *TDX) Close() error {
-	return t.dev.Close()
+	return nil
 }
 
 // Attest requests a TDX attestation quote incorporating the given report data.
@@ -41,7 +45,7 @@ func (t *TDX) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	rawQuote, err := client.GetRawQuote(t.dev, reportData)
+	rawQuote, err := client.GetRawQuote(t.qp, reportData)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tdx quote request failed: %w", err)
 	}
