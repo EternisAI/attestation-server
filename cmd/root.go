@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -31,6 +31,7 @@ func Execute() {
 }
 
 func init() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.Flags().StringVarP(&cfgFile, "config-file", "c", "", "path to config file (default: ./config/config.toml, ./config.toml)")
@@ -86,11 +87,11 @@ func initConfig() {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if explicit {
-			fmt.Fprintf(os.Stderr, "error reading config file: %s\n", err)
+			slog.Error("error reading config file", "error", err)
 			os.Exit(1)
 		}
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			fmt.Fprintf(os.Stderr, "error reading config file: %s\n", err)
+			slog.Error("error reading config file", "error", err)
 			os.Exit(1)
 		}
 	}
@@ -99,7 +100,7 @@ func initConfig() {
 func runServer(cmd *cobra.Command, args []string) error {
 	cfg, err := app.LoadConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid configuration: %s\n", err)
+		slog.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
 	logger := app.NewLogger(cfg)
