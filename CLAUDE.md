@@ -48,6 +48,12 @@ port = 8187
 build_info   = "/etc/build-info.json"
 endorsements = "/etc/endorsements.json"
 
+[report]
+evidence = ["nitronsm"]
+
+[report.user_data]
+env = []
+
 [tls.public]
 cert_path = ""
 key_path  = ""
@@ -84,6 +90,8 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH` | `tls.public.key_path` | — | Path to public TLS private key (PEM) |
 | `ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH` | `tls.private.cert_path` | — | Path to private TLS certificate (PEM) |
 | `ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH` | `tls.private.key_path` | — | Path to private TLS private key (PEM) |
+| `ATTESTATION_SERVER_REPORT_EVIDENCE` | `report.evidence` | `["nitronsm"]` | Evidence types (required, non-empty, unique; allowed: `nitronsm`, `nitrotpm`) |
+| `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Environment variable names to include in report (unique) |
 
 ## Logging conventions
 

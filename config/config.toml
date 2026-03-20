@@ -12,6 +12,12 @@ port = 8187
 build_info   = "/etc/build-info.json"
 endorsements = "/etc/endorsements.json"
 
+[report]
+evidence = ["nitronsm"]  # required, non-empty; allowed: nitronsm, nitrotpm
+
+[report.user_data]
+env = []  # optional; environment variable names to include
+
 [tls.public]
 cert_path = ""
 key_path  = ""
