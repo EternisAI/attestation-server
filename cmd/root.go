@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,6 +12,8 @@ import (
 
 	app "github.com/eternisai/attestation-server/internal"
 )
+
+var cfgFile string
 
 var rootCmd = &cobra.Command{
 	Use:           "attestation-server",
@@ -30,52 +33,69 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.Flags().String("host", "0.0.0.0", "bind host address")
-	rootCmd.Flags().Int("port", 8187, "bind port number")
+	rootCmd.Flags().StringVarP(&cfgFile, "config-file", "c", "", "path to config file (default: ./config/config.toml, ./config.toml)")
 	rootCmd.Flags().String("log-format", "json", "log format (json, text)")
 	rootCmd.Flags().String("log-level", "info", "log level (debug, info, warn, error)")
-	rootCmd.Flags().String("build-info-path", "/etc/build-info.json", "path to build information file")
-	rootCmd.Flags().String("endorsements-path", "/etc/endorsements.json", "path to endorsements URL list file")
-	rootCmd.Flags().String("public-tls-cert-path", "", "path to public TLS certificate (PEM)")
-	rootCmd.Flags().String("public-tls-key-path", "", "path to public TLS private key (PEM)")
-	rootCmd.Flags().String("private-tls-cert-path", "", "path to private TLS certificate (PEM)")
-	rootCmd.Flags().String("private-tls-key-path", "", "path to private TLS private key (PEM)")
 
-	_ = viper.BindPFlag("bind_host", rootCmd.Flags().Lookup("host"))
-	_ = viper.BindPFlag("bind_port", rootCmd.Flags().Lookup("port"))
-	_ = viper.BindPFlag("log_format", rootCmd.Flags().Lookup("log-format"))
-	_ = viper.BindPFlag("log_level", rootCmd.Flags().Lookup("log-level"))
-	_ = viper.BindPFlag("build_info_path", rootCmd.Flags().Lookup("build-info-path"))
-	_ = viper.BindPFlag("endorsements_path", rootCmd.Flags().Lookup("endorsements-path"))
-	_ = viper.BindPFlag("public_tls_cert_path", rootCmd.Flags().Lookup("public-tls-cert-path"))
-	_ = viper.BindPFlag("public_tls_key_path", rootCmd.Flags().Lookup("public-tls-key-path"))
-	_ = viper.BindPFlag("private_tls_cert_path", rootCmd.Flags().Lookup("private-tls-cert-path"))
-	_ = viper.BindPFlag("private_tls_key_path", rootCmd.Flags().Lookup("private-tls-key-path"))
+	_ = viper.BindPFlag("log.format", rootCmd.Flags().Lookup("log-format"))
+	_ = viper.BindPFlag("log.level", rootCmd.Flags().Lookup("log-level"))
 }
 
 func initConfig() {
-	viper.SetDefault("bind_host", "0.0.0.0")
-	viper.SetDefault("bind_port", 8187)
-	viper.SetDefault("log_format", "json")
-	viper.SetDefault("log_level", "info")
-	viper.SetDefault("build_info_path", "/etc/build-info.json")
-	viper.SetDefault("endorsements_path", "/etc/endorsements.json")
+	viper.SetConfigType("toml")
 
-	_ = viper.BindEnv("bind_host", "BIND_HOST")
-	_ = viper.BindEnv("bind_port", "BIND_PORT")
-	_ = viper.BindEnv("log_format", "LOG_FORMAT")
-	_ = viper.BindEnv("log_level", "LOG_LEVEL")
-	_ = viper.BindEnv("build_info_path", "BUILD_INFO_PATH")
-	_ = viper.BindEnv("endorsements_path", "ENDORSEMENTS_PATH")
-	_ = viper.BindEnv("public_tls_cert_path", "PUBLIC_TLS_CERT_PATH")
-	_ = viper.BindEnv("public_tls_key_path", "PUBLIC_TLS_KEY_PATH")
-	_ = viper.BindEnv("private_tls_cert_path", "PRIVATE_TLS_CERT_PATH")
-	_ = viper.BindEnv("private_tls_key_path", "PRIVATE_TLS_KEY_PATH")
+	// Defaults
+	viper.SetDefault("log.format", "json")
+	viper.SetDefault("log.level", "info")
+	viper.SetDefault("server.host", "0.0.0.0")
+	viper.SetDefault("server.port", 8187)
+	viper.SetDefault("paths.build_info", "/etc/build-info.json")
+	viper.SetDefault("paths.endorsements", "/etc/endorsements.json")
+
+	// Explicit environment variable bindings (avoids AutomaticEnv underscore ambiguity)
+	_ = viper.BindEnv("log.format", "ATTESTATION_SERVER_LOG_FORMAT")
+	_ = viper.BindEnv("log.level", "ATTESTATION_SERVER_LOG_LEVEL")
+	_ = viper.BindEnv("server.host", "ATTESTATION_SERVER_SERVER_HOST")
+	_ = viper.BindEnv("server.port", "ATTESTATION_SERVER_SERVER_PORT")
+	_ = viper.BindEnv("paths.build_info", "ATTESTATION_SERVER_PATHS_BUILD_INFO")
+	_ = viper.BindEnv("paths.endorsements", "ATTESTATION_SERVER_PATHS_ENDORSEMENTS")
+	_ = viper.BindEnv("tls.public.cert_path", "ATTESTATION_SERVER_TLS_PUBLIC_CERT_PATH")
+	_ = viper.BindEnv("tls.public.key_path", "ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH")
+	_ = viper.BindEnv("tls.private.cert_path", "ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH")
+	_ = viper.BindEnv("tls.private.key_path", "ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH")
+
+	// Config file resolution: flag > env var > fallback paths
+	explicit := true
+	if cfgFile != "" {
+		viper.SetConfigFile(cfgFile)
+	} else if envCfg := os.Getenv("ATTESTATION_SERVER_CONFIG_FILE"); envCfg != "" {
+		viper.SetConfigFile(envCfg)
+	} else {
+		explicit = false
+		viper.SetConfigName("config")
+		viper.AddConfigPath("./config")
+		viper.AddConfigPath(".")
+	}
+
+	if err := viper.ReadInConfig(); err != nil {
+		if explicit {
+			fmt.Fprintf(os.Stderr, "error reading config file: %s\n", err)
+			os.Exit(1)
+		}
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			fmt.Fprintf(os.Stderr, "error reading config file: %s\n", err)
+			os.Exit(1)
+		}
+	}
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
 	cfg := app.LoadConfig()
 	logger := app.NewLogger(cfg)
+
+	if f := viper.ConfigFileUsed(); f != "" {
+		logger.Info("loaded config file", "path", f)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

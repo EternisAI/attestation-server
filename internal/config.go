@@ -22,19 +22,19 @@ type Config struct {
 	PrivateTLSKeyPath  string
 }
 
-// LoadConfig reads configuration from viper (env vars / pflags / defaults).
+// LoadConfig reads configuration from viper (config file / env vars / pflags / defaults).
 func LoadConfig() *Config {
 	return &Config{
-		BindHost:           viper.GetString("bind_host"),
-		BindPort:           viper.GetInt("bind_port"),
-		LogFormat:          viper.GetString("log_format"),
-		LogLevel:           parseLogLevel(viper.GetString("log_level")),
-		BuildInfoPath:      viper.GetString("build_info_path"),
-		EndorsementsPath:   viper.GetString("endorsements_path"),
-		PublicTLSCertPath:  absPath(viper.GetString("public_tls_cert_path")),
-		PublicTLSKeyPath:   absPath(viper.GetString("public_tls_key_path")),
-		PrivateTLSCertPath: absPath(viper.GetString("private_tls_cert_path")),
-		PrivateTLSKeyPath:  absPath(viper.GetString("private_tls_key_path")),
+		BindHost:           viper.GetString("server.host"),
+		BindPort:           viper.GetInt("server.port"),
+		LogFormat:          viper.GetString("log.format"),
+		LogLevel:           parseLogLevel(viper.GetString("log.level")),
+		BuildInfoPath:      viper.GetString("paths.build_info"),
+		EndorsementsPath:   viper.GetString("paths.endorsements"),
+		PublicTLSCertPath:  absPath(viper.GetString("tls.public.cert_path")),
+		PublicTLSKeyPath:   absPath(viper.GetString("tls.public.key_path")),
+		PrivateTLSCertPath: absPath(viper.GetString("tls.private.cert_path")),
+		PrivateTLSKeyPath:  absPath(viper.GetString("tls.private.key_path")),
 	}
 }
 

@@ -1,0 +1,21 @@
+# Attestation server configuration
+
+[log]
+format = "json"   # json, text
+level  = "info"   # debug, info, warn, error
+
+[server]
+host = "0.0.0.0"
+port = 8187
+
+[paths]
+build_info   = "/etc/build-info.json"
+endorsements = "/etc/endorsements.json"
+
+[tls.public]
+cert_path = ""
+key_path  = ""
+
+[tls.private]
+cert_path = ""
+key_path  = ""
