@@ -22,13 +22,24 @@ type Config struct {
 	PublicTLSKeyPath   string
 	PrivateTLSCertPath string
 	PrivateTLSKeyPath  string
-	ReportEvidence     []string
+	ReportEvidence     EvidenceConfig
 	ReportEnvVars      []string
+}
+
+// EvidenceConfig holds the evidence type flags.
+type EvidenceConfig struct {
+	NitroNSM bool
+	NitroTPM bool
+	SEVSNP   bool
 }
 
 // LoadConfig reads configuration from viper (config file / env vars / pflags / defaults).
 func LoadConfig() (*Config, error) {
-	evidence := viper.GetStringSlice("report.evidence")
+	evidence := EvidenceConfig{
+		NitroNSM: viper.GetBool("report.evidence.nitronsm"),
+		NitroTPM: viper.GetBool("report.evidence.nitrotpm"),
+		SEVSNP:   viper.GetBool("report.evidence.sevsnp"),
+	}
 	if err := validateEvidence(evidence); err != nil {
 		return nil, err
 	}
@@ -53,22 +64,12 @@ func LoadConfig() (*Config, error) {
 	}, nil
 }
 
-var validEvidence = map[string]bool{
-	"nitronsm": true,
-	"nitrotpm": true,
-}
-
-func validateEvidence(evidence []string) error {
-	if len(evidence) == 0 {
-		return fmt.Errorf("report.evidence must not be empty")
+func validateEvidence(e EvidenceConfig) error {
+	if !e.NitroNSM && !e.NitroTPM && !e.SEVSNP {
+		return fmt.Errorf("report.evidence: at least one evidence type must be enabled")
 	}
-	if dup := findDuplicate(evidence); dup != "" {
-		return fmt.Errorf("report.evidence contains duplicate value %q", dup)
-	}
-	for _, e := range evidence {
-		if !validEvidence[e] {
-			return fmt.Errorf("report.evidence contains invalid value %q (allowed: nitronsm, nitrotpm)", e)
-		}
+	if e.NitroNSM && (e.NitroTPM || e.SEVSNP) {
+		return fmt.Errorf("report.evidence: nitronsm cannot be combined with other evidence types")
 	}
 	return nil
 }

@@ -51,7 +51,9 @@ func initConfig() {
 	viper.SetDefault("server.port", 8187)
 	viper.SetDefault("paths.build_info", "/etc/build-info.json")
 	viper.SetDefault("paths.endorsements", "/etc/endorsements.json")
-	viper.SetDefault("report.evidence", []string{"nitronsm"})
+	viper.SetDefault("report.evidence.nitronsm", false)
+	viper.SetDefault("report.evidence.nitrotpm", false)
+	viper.SetDefault("report.evidence.sevsnp", false)
 
 	// Explicit environment variable bindings (avoids AutomaticEnv underscore ambiguity)
 	_ = viper.BindEnv("log.format", "ATTESTATION_SERVER_LOG_FORMAT")
@@ -64,7 +66,9 @@ func initConfig() {
 	_ = viper.BindEnv("tls.public.key_path", "ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH")
 	_ = viper.BindEnv("tls.private.cert_path", "ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH")
 	_ = viper.BindEnv("tls.private.key_path", "ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH")
-	_ = viper.BindEnv("report.evidence", "ATTESTATION_SERVER_REPORT_EVIDENCE")
+	_ = viper.BindEnv("report.evidence.nitronsm", "ATTESTATION_SERVER_REPORT_EVIDENCE_NITRONSM")
+	_ = viper.BindEnv("report.evidence.nitrotpm", "ATTESTATION_SERVER_REPORT_EVIDENCE_NITROTPM")
+	_ = viper.BindEnv("report.evidence.sevsnp", "ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP")
 	_ = viper.BindEnv("report.user_data.env", "ATTESTATION_SERVER_REPORT_USER_DATA_ENV")
 
 	// Config file resolution: flag > env var > fallback paths

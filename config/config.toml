@@ -12,8 +12,10 @@ port = 8187
 build_info   = "/etc/build-info.json"
 endorsements = "/etc/endorsements.json"
 
-[report]
-evidence = ["nitronsm"]  # required, non-empty; allowed: nitronsm, nitrotpm
+[report.evidence]
+nitronsm = false  # at least one must be true; nitronsm excludes all others
+nitrotpm = false
+sevsnp   = false
 
 [report.user_data]
 env = []  # optional; environment variable names to include
