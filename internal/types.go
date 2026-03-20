@@ -47,3 +47,33 @@ type BuildInfo struct {
 	// Deployment target for a workflow or job.
 	DeploymentEnvironment string `json:"DeploymentEnvironment,omitempty"`
 }
+
+type AttestationReport struct {
+	Evidence []*AttestationEvidence `json:"evidence"`
+	Data     *AttestationReportData `json:"data"`
+}
+
+type AttestationEvidence struct {
+	Kind string `json:"kind"`
+	Data []byte `json:"data"`
+}
+
+type AttestationReportData struct {
+	RequestID    string         `json:"request_id"`
+	Nonce        string         `json:"nonce,omitempty"`
+	BuildInfo    *BuildInfo     `json:"build_info"`
+	TLS          *TLSReportData `json:"tls"`
+	Endorsements []string       `json:"endorsements"`
+	UserData     map[string]any `json:"user_data,omitempty"`
+}
+
+type TLSReportData struct {
+	Client  *TLSCertificateData `json:"client,omitempty"`
+	Public  *TLSCertificateData `json:"public,omitempty"`
+	Private *TLSCertificateData `json:"private,omitempty"`
+}
+
+type TLSCertificateData struct {
+	CertificateFingerprint string `json:"certificate"`
+	PublicKeyFingerprint   string `json:"public_key,omitempty"`
+}

@@ -10,10 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/google/uuid"
+	"github.com/hf/nsm"
 )
 
 // Server wraps a Fiber application with its dependencies.
@@ -24,6 +27,8 @@ type Server struct {
 	buildInfo    *BuildInfo
 	endorsements []*url.URL
 	certs        tlsCertificates
+	nsm          *nsm.Session
+	nsmMu        sync.Mutex
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -71,6 +76,15 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		return nil, err
 	}
 
+	if cfg.ReportEvidence.NitroNSM {
+		sess, err := nsm.OpenDefaultSession()
+		if err != nil {
+			return nil, fmt.Errorf("opening nitro nsm session: %w", err)
+		}
+		s.nsm = sess
+		logger.Info("opened nitro nsm session")
+	}
+
 	s.app = fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler:          s.errorHandler,
@@ -78,7 +92,9 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		JSONDecoder:           json.Unmarshal,
 	})
 
-	s.app.Use(requestid.New())
+	s.app.Use(requestid.New(requestid.Config{
+		Generator: func() string { return uuid.NewString() },
+	}))
 	s.app.Use(s.accessLog())
 	s.setupRoutes()
 
@@ -224,7 +240,5 @@ func (s *Server) accessLog() fiber.Handler {
 }
 
 func (s *Server) setupRoutes() {
-	s.app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ok"})
-	})
+	s.app.Get("/api/v1/attestation", s.handleAttestation)
 }

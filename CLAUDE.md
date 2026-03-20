@@ -11,14 +11,15 @@ A Go HTTP server for serving TEE (Trusted Execution Environment) attestation doc
 ## Project structure
 
 ```
-main.go                # entry point
-cmd/root.go            # cobra root command; initializes config, logger, and starts server
-internal/config.go     # Config struct and LoadConfig() (package app)
-internal/logging.go    # NewLogger() (package app)
-internal/server.go     # Server, NewServer(), Run() (package app)
-internal/tls.go        # TLS certificate loading and hot-reload (package app)
-internal/types.go      # BuildInfo struct (package app)
-config/config.toml     # default configuration file
+main.go                    # entry point
+cmd/root.go                # cobra root command; initializes config, logger, and starts server
+internal/attestation.go    # GET /api/v1/attestation handler and helpers (package app)
+internal/config.go         # Config struct and LoadConfig() (package app)
+internal/logging.go        # NewLogger() (package app)
+internal/server.go         # Server, NewServer(), Run() (package app)
+internal/tls.go            # TLS certificate loading and hot-reload (package app)
+internal/types.go          # BuildInfo, AttestationReport, AttestationReportData structs (package app)
+config/config.toml         # default configuration file
 ```
 
 ## Configuration
