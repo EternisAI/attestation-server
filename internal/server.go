@@ -30,6 +30,7 @@ type Server struct {
 	nsm          *nsm.Session
 	nsmMu        sync.Mutex
 	nitroTPM     *NitroTPM
+	sevSNP       *SEVSNP
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -93,6 +94,15 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		}
 		s.nitroTPM = tpm
 		logger.Info("opened nitro tpm device")
+	}
+
+	if cfg.ReportEvidence.SEVSNP {
+		snp, err := OpenSEVSNP()
+		if err != nil {
+			return nil, fmt.Errorf("opening sev-snp device: %w", err)
+		}
+		s.sevSNP = snp
+		logger.Info("opened sev-snp guest device")
 	}
 
 	s.app = fiber.New(fiber.Config{

@@ -116,6 +116,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	// Non-exclusive evidence types can be combined.
 	var evidence []*AttestationEvidence
 
+	var nitroTPMBlob []byte
 	if s.cfg.ReportEvidence.NitroTPM {
 		blob, err := s.attestNitroTPM(digest[:])
 		if err != nil {
@@ -125,7 +126,22 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
 		}
+		nitroTPMBlob = blob
 		evidence = append(evidence, &AttestationEvidence{Kind: "nitrotpm", Blob: blob, Data: nitroAttestationData(doc)})
+	}
+
+	if s.cfg.ReportEvidence.SEVSNP {
+		var snpReportData [64]byte
+		if nitroTPMBlob != nil {
+			snpReportData = sha512.Sum512(nitroTPMBlob)
+		} else {
+			snpReportData = digest
+		}
+		blob, report, err := s.sevSNP.Attest(snpReportData)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("sevsnp: %v", err))
+		}
+		evidence = append(evidence, &AttestationEvidence{Kind: "sevsnp", Blob: blob, Data: sevsnpAttestationData(report)})
 	}
 
 	if len(evidence) == 0 {
