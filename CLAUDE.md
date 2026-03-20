@@ -40,6 +40,10 @@ All configuration is via environment variables. Some options also have CLI flag 
 - Access logs (via the fiber middleware in `server.go`) include: `method`, `path`, `status`, `duration_ms`, `request_id`. Log level is INFO for 2xx/3xx, WARN for 4xx, ERROR for 5xx.
 - Errors in log fields use key `"error"`.
 
+## Code style
+
+- All Go code must be `go fmt`-conformant. Always run `go fmt ./...` before committing.
+
 ## Development
 
 ```sh
@@ -51,6 +55,9 @@ go run . --port 8187
 
 # run tests
 go test ./...
+
+# format
+go fmt ./...
 ```
 
 ## Commits

@@ -2,9 +2,9 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/url"
 	"os"
@@ -17,9 +17,9 @@ import (
 
 // Server wraps a Fiber application with its dependencies.
 type Server struct {
-	app       *fiber.App
-	cfg       *Config
-	logger    *slog.Logger
+	app          *fiber.App
+	cfg          *Config
+	logger       *slog.Logger
 	buildInfo    *BuildInfo
 	endorsements []*url.URL
 }
@@ -65,6 +65,8 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	s.app = fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler:          s.errorHandler,
+		JSONEncoder:           json.Marshal,
+		JSONDecoder:           json.Unmarshal,
 	})
 
 	s.app.Use(requestid.New())

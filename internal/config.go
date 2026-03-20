@@ -9,10 +9,10 @@ import (
 
 // Config holds the resolved server configuration.
 type Config struct {
-	BindHost      string
-	BindPort      int
-	LogFormat     string
-	LogLevel      slog.Level
+	BindHost         string
+	BindPort         int
+	LogFormat        string
+	LogLevel         slog.Level
 	BuildInfoPath    string
 	EndorsementsPath string
 }
