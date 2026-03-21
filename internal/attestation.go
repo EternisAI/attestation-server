@@ -83,6 +83,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		TLS:          tlsData,
 		Endorsements: endorsements,
 		UserData:     userData,
+		SecureBoot:   s.secureBoot,
 	}
 
 	data, err := json.MarshalWithOption(reportData, json.DisableHTMLEscape())

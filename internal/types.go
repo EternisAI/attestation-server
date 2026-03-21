@@ -66,6 +66,7 @@ type AttestationReportData struct {
 	TLS          *TLSReportData `json:"tls"`
 	Endorsements []string       `json:"endorsements"`
 	UserData     map[string]any `json:"user_data,omitempty"`
+	SecureBoot   *bool          `json:"secure_boot,omitempty"`
 }
 
 type TLSReportData struct {

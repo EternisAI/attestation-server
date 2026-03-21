@@ -22,6 +22,9 @@ tdx         = false
 [report.user_data]
 env = []  # optional; environment variable names to include
 
+[secure_boot]
+enforce = false
+
 [tls.public]
 cert_path = ""
 key_path  = ""

@@ -24,6 +24,7 @@ type Config struct {
 	PrivateTLSKeyPath  string
 	ReportEvidence     EvidenceConfig
 	ReportEnvVars      []string
+	SecureBootEnforce  bool
 }
 
 // EvidenceConfig holds the evidence type flags.
@@ -65,6 +66,7 @@ func LoadConfig() (*Config, error) {
 		PrivateTLSKeyPath:  absPath(viper.GetString("tls.private.key_path")),
 		ReportEvidence:     evidence,
 		ReportEnvVars:      envVars,
+		SecureBootEnforce:  viper.GetBool("secure_boot.enforce"),
 	}, nil
 }
 

@@ -32,6 +32,7 @@ type Server struct {
 	nitroTPM     *NitroTPM
 	sevSNP       *SEVSNP
 	tdx          *TDX
+	secureBoot   *bool
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -77,6 +78,20 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	}
 	if err := s.loadCertificates(); err != nil {
 		return nil, err
+	}
+
+	sbState, sbErr := readSecureBootState()
+	if sbErr != nil {
+		if cfg.SecureBootEnforce {
+			return nil, fmt.Errorf("secure boot: %w", sbErr)
+		}
+		logger.Warn("could not read secure boot state", "error", sbErr)
+	} else {
+		if cfg.SecureBootEnforce && !*sbState {
+			return nil, fmt.Errorf("secure boot is not enabled")
+		}
+		s.secureBoot = sbState
+		logger.Info("read secure boot state", "enabled", *sbState)
 	}
 
 	if cfg.ReportEvidence.NitroNSM {
@@ -271,4 +286,20 @@ func (s *Server) accessLog() fiber.Handler {
 
 func (s *Server) setupRoutes() {
 	s.app.Get("/api/v1/attestation", s.handleAttestation)
+}
+
+// readSecureBootState reads the UEFI SecureBoot variable from sysfs.
+// The file contains a 4-byte EFI variable attributes header followed by
+// a single byte: 0x01 = enabled, 0x00 = disabled.
+func readSecureBootState() (*bool, error) {
+	const path = "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) < 5 {
+		return nil, fmt.Errorf("secure boot efi variable too short: %d bytes", len(data))
+	}
+	enabled := data[4] != 0
+	return &enabled, nil
 }

@@ -60,6 +60,9 @@ sevsnp      = false
 sevsnp_vmpl = 0
 tdx         = false
 
+[secure_boot]
+enforce = false
+
 [report.user_data]
 env = []
 
@@ -104,6 +107,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP` | `report.evidence.sevsnp` | `false` | Enable SEV-SNP evidence |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP_VMPL` | `report.evidence.sevsnp_vmpl` | `0` | VMPL level for SEV-SNP attestation (0–3) |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_TDX` | `report.evidence.tdx` | `false` | Enable Intel TDX evidence (exclusive: cannot combine with others) |
+| `ATTESTATION_SERVER_SECURE_BOOT_ENFORCE` | `secure_boot.enforce` | `false` | Enforce UEFI Secure Boot; exit on startup if not enabled |
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Environment variable names to include in report (unique) |
 
 ## Logging conventions
