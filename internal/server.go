@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/url"
 	"os"
@@ -12,9 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
+
+	"github.com/eternisai/attestation-server/pkg/nitro"
+	"github.com/eternisai/attestation-server/pkg/sevsnp"
+	"github.com/eternisai/attestation-server/pkg/tdx"
 )
 
 // Server wraps a Fiber application with its dependencies.
@@ -25,10 +29,10 @@ type Server struct {
 	buildInfo    *BuildInfo
 	endorsements []*url.URL
 	certs        tlsCertificates
-	nitroNSM     *NitroNSM
-	nitroTPM     *NitroTPM
-	sevSNP       *SEVSNP
-	tdx          *TDX
+	nitroNSM     *nitro.NSM
+	nitroTPM     *nitro.TPM
+	sevSNP       *sevsnp.Device
+	tdxDev       *tdx.Device
 	secureBoot   *bool
 }
 
@@ -102,7 +106,7 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	if cfg.ReportEvidence.NitroNSM {
-		nsmDev, err := OpenNitroNSM()
+		nsmDev, err := nitro.OpenNSM()
 		if err != nil {
 			return nil, fmt.Errorf("opening nitro nsm: %w", err)
 		}
@@ -111,16 +115,16 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	if cfg.ReportEvidence.NitroTPM {
-		tpm, err := OpenNitroTPM()
+		tpmDev, err := nitro.OpenTPM()
 		if err != nil {
 			return nil, fmt.Errorf("opening nitro tpm: %w", err)
 		}
-		s.nitroTPM = tpm
+		s.nitroTPM = tpmDev
 		logger.Info("opened nitro tpm device")
 	}
 
 	if cfg.ReportEvidence.SEVSNP {
-		snp, err := OpenSEVSNP()
+		snp, err := sevsnp.Open()
 		if err != nil {
 			return nil, fmt.Errorf("opening sev-snp device: %w", err)
 		}
@@ -129,11 +133,11 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	if cfg.ReportEvidence.TDX {
-		tdxDev, err := OpenTDX()
+		tdxDev, err := tdx.Open()
 		if err != nil {
 			return nil, fmt.Errorf("opening tdx device: %w", err)
 		}
-		s.tdx = tdxDev
+		s.tdxDev = tdxDev
 		logger.Info("opened tdx guest device")
 	}
 

@@ -1,4 +1,4 @@
-package app
+package nitro
 
 import (
 	"bytes"
@@ -52,13 +52,13 @@ var awsNitroRootCA = func() *x509.Certificate {
 // coseAlgES384 is the COSE algorithm identifier for ECDSA w/ SHA-384.
 const coseAlgES384 = -35
 
-// NitroAttestationDocument is the full deserialized Nitro attestation document
-// as defined by the AWS spec. Both Nitro NSM and NitroTPM documents share this
+// AttestationDocument is the full deserialized Nitro attestation document
+// as defined by the AWS spec. Both NSM and NitroTPM documents share this
 // structure; the only difference is the PCR field name ("pcrs" vs "nitrotpm_pcrs").
 // After deserialization exactly one of PCRs or NitroTPMPCRs will be populated.
 //
 // https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/nitrotpm-attestation-document-validate.html#doc-def
-type NitroAttestationDocument struct {
+type AttestationDocument struct {
 	ModuleID     string         `cbor:"module_id"`
 	Timestamp    uint64         `cbor:"timestamp"`
 	Digest       string         `cbor:"digest"`
@@ -71,10 +71,10 @@ type NitroAttestationDocument struct {
 	Nonce        []byte         `cbor:"nonce"`
 }
 
-// NitroAttestationData contains select fields from a verified Nitro attestation
+// AttestationData contains select fields from a verified Nitro attestation
 // document, included in the API response for convenience. Exactly one of PCRs
 // or NitroTPMPCRs is populated depending on the evidence type.
-type NitroAttestationData struct {
+type AttestationData struct {
 	Module       string           `json:"module"`
 	Timestamp    time.Time        `json:"timestamp"`
 	Digest       string           `json:"digest"`
@@ -83,10 +83,10 @@ type NitroAttestationData struct {
 	Nonce        HexBytes         `json:"nonce,omitempty"`
 }
 
-// nitroAttestationData extracts the select API response fields from a verified
-// NitroAttestationDocument.
-func nitroAttestationData(doc *NitroAttestationDocument) *NitroAttestationData {
-	return &NitroAttestationData{
+// NewAttestationData extracts the select API response fields from a verified
+// AttestationDocument.
+func NewAttestationData(doc *AttestationDocument) *AttestationData {
+	return &AttestationData{
 		Module:       doc.ModuleID,
 		Timestamp:    time.UnixMilli(int64(doc.Timestamp)).UTC(),
 		Digest:       doc.Digest,
@@ -107,12 +107,12 @@ func toHexBytesMap(m map[int][]byte) map[int]HexBytes {
 	return out
 }
 
-// verifyNitroAttestation parses a COSE_Sign1-wrapped Nitro attestation
+// VerifyAttestation parses a COSE_Sign1-wrapped Nitro attestation
 // document, verifies the COSE ES384 signature and certificate chain against
 // the well-known AWS Nitro root CA, checks that the nonce matches, and returns
-// the full deserialized document. Works for both Nitro NSM and NitroTPM
+// the full deserialized document. Works for both NSM and NitroTPM
 // attestation documents.
-func verifyNitroAttestation(blob, expectedNonce []byte) (*NitroAttestationDocument, error) {
+func VerifyAttestation(blob, expectedNonce []byte) (*AttestationDocument, error) {
 	// --- 1. Parse COSE_Sign1 envelope ---
 	// COSE_Sign1 = [protected, unprotected, payload, signature]
 	// fxamacker/cbor strips the CBOR tag 18 transparently.
@@ -146,7 +146,7 @@ func verifyNitroAttestation(blob, expectedNonce []byte) (*NitroAttestationDocume
 	}
 
 	// --- 2. Decode attestation document ---
-	var doc NitroAttestationDocument
+	var doc AttestationDocument
 	if err := cbor.Unmarshal(payload, &doc); err != nil {
 		return nil, fmt.Errorf("decoding attestation document: %w", err)
 	}

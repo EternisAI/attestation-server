@@ -1,8 +1,9 @@
-package app
+package tdx
 
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"sync"
@@ -13,6 +14,14 @@ import (
 	pb "github.com/google/go-tdx-guest/proto/tdx"
 	"github.com/google/go-tdx-guest/verify"
 )
+
+// HexBytes is a byte slice that serializes to a hex-encoded JSON string
+// instead of the default base64.
+type HexBytes []byte
+
+func (h HexBytes) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + hex.EncodeToString(h) + `"`), nil
+}
 
 // intelSGXRootCAPEM is the Intel SGX Root CA certificate used to verify the
 // PCK certificate chain in TDX attestation quotes.
@@ -46,18 +55,18 @@ var intelSGXRootPool = func() *x509.CertPool {
 	return pool
 }()
 
-// TDX manages the TDX quote provider for attestation.
+// Device manages the TDX quote provider for attestation.
 // All access is serialized by an internal mutex for safe concurrent use.
-type TDX struct {
+type Device struct {
 	mu sync.Mutex
 	qp client.QuoteProvider
 }
 
-// OpenTDX initializes the TDX quote provider for attestation.
+// Open initializes the TDX quote provider for attestation.
 // It uses the ConfigFS-based QuoteProvider which is the non-deprecated path
 // supported by modern kernels (the legacy /dev/tdx_guest ioctl returns ENOTTY
 // for quote requests on these systems).
-func OpenTDX() (*TDX, error) {
+func Open() (*Device, error) {
 	qp, err := client.GetQuoteProvider()
 	if err != nil {
 		return nil, fmt.Errorf("getting tdx quote provider: %w", err)
@@ -65,17 +74,17 @@ func OpenTDX() (*TDX, error) {
 	if err := qp.IsSupported(); err != nil {
 		return nil, fmt.Errorf("tdx quote provider not supported: %w", err)
 	}
-	return &TDX{qp: qp}, nil
+	return &Device{qp: qp}, nil
 }
 
 // Close is a no-op; the ConfigFS quote provider holds no persistent resources.
-func (t *TDX) Close() error {
+func (t *Device) Close() error {
 	return nil
 }
 
 // Attest requests a TDX attestation quote incorporating the given report data.
 // It returns the raw quote bytes and the verified parsed QuoteV4.
-func (t *TDX) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
+func (t *Device) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -84,7 +93,7 @@ func (t *TDX) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
 		return nil, nil, fmt.Errorf("tdx quote request failed: %w", err)
 	}
 
-	quote, err := verifyTDXQuote(rawQuote, reportData)
+	quote, err := VerifyQuote(rawQuote, reportData)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -92,11 +101,11 @@ func (t *TDX) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
 	return rawQuote, quote, nil
 }
 
-// verifyTDXQuote parses the raw quote, verifies the ECDSA-P256 signature and
+// VerifyQuote parses the raw quote, verifies the ECDSA-P256 signature and
 // PCK certificate chain against the Intel SGX Root CA (offline, no collateral
 // fetching or CRL check), and validates that the report data field matches the
 // expected value.
-func verifyTDXQuote(rawQuote []byte, expectedReportData [64]byte) (*pb.QuoteV4, error) {
+func VerifyQuote(rawQuote []byte, expectedReportData [64]byte) (*pb.QuoteV4, error) {
 	parsed, err := abi.QuoteToProto(rawQuote)
 	if err != nil {
 		return nil, fmt.Errorf("parsing tdx quote: %w", err)
@@ -124,9 +133,9 @@ func verifyTDXQuote(rawQuote []byte, expectedReportData [64]byte) (*pb.QuoteV4, 
 	return quote, nil
 }
 
-// TDXAttestationData contains select fields from a verified TDX attestation
+// AttestationData contains select fields from a verified TDX attestation
 // quote, included in the API response for convenience.
-type TDXAttestationData struct {
+type AttestationData struct {
 	Version        uint32     `json:"version"`
 	TeeType        uint32     `json:"tee_type"`
 	QeSvn          HexBytes   `json:"qe_svn"`
@@ -146,7 +155,9 @@ type TDXAttestationData struct {
 	ReportData     HexBytes   `json:"report_data"`
 }
 
-func tdxAttestationData(quote *pb.QuoteV4) *TDXAttestationData {
+// NewAttestationData extracts the select API response fields from a verified
+// TDX QuoteV4.
+func NewAttestationData(quote *pb.QuoteV4) *AttestationData {
 	h := quote.GetHeader()
 	body := quote.GetTdQuoteBody()
 
@@ -155,7 +166,7 @@ func tdxAttestationData(quote *pb.QuoteV4) *TDXAttestationData {
 		rtmrs[i] = HexBytes(r)
 	}
 
-	return &TDXAttestationData{
+	return &AttestationData{
 		Version:        h.GetVersion(),
 		TeeType:        h.GetTeeType(),
 		QeSvn:          HexBytes(h.GetQeSvn()),

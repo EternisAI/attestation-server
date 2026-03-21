@@ -16,15 +16,15 @@ cmd/root.go                # cobra root command; initializes config, logger, and
 internal/attestation.go    # GET /api/v1/attestation handler and helpers (package app)
 internal/config.go         # Config struct and LoadConfig() (package app)
 internal/logging.go        # NewLogger() (package app)
-internal/nitro.go          # Shared Nitro attestation: COSE_Sign1 verification, cert chain validation, embedded AWS Nitro root CA (package app)
-internal/nitronsm.go       # NitroNSM device access and attestation via /dev/nsm (package app)
-internal/nitrotpm.go       # NitroTPM device access and attestation via raw TPM2 protocol over /dev/tpm0 (package app)
-internal/sevsnp.go         # SEV-SNP device access, attestation via go-sev-guest, signature verification, report parsing (package app)
-internal/tdx.go            # Intel TDX device access, attestation via go-tdx-guest, quote verification, report parsing (package app)
-internal/tpm.go            # Generic TPM PCR reading via google/go-tpm over /dev/tpmrm0 (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS certificate loading and hot-reload (package app)
 internal/types.go          # BuildInfo, AttestationReport, AttestationReportData, and other shared structs (package app)
+pkg/nitro/nitro.go         # Shared Nitro attestation: COSE_Sign1 verification, cert chain validation, embedded AWS Nitro root CA (package nitro)
+pkg/nitro/nsm.go           # NSM device access and attestation via /dev/nsm (package nitro)
+pkg/nitro/tpm.go           # NitroTPM device access and attestation via raw TPM2 protocol over /dev/tpm0 (package nitro)
+pkg/sevsnp/sevsnp.go       # SEV-SNP device access, attestation via go-sev-guest, signature verification, report parsing (package sevsnp)
+pkg/tdx/tdx.go             # Intel TDX device access, attestation via go-tdx-guest, quote verification, report parsing (package tdx)
+pkg/tpm/tpm.go             # Generic TPM PCR reading via google/go-tpm over /dev/tpmrm0 (package tpm)
 config/config.toml         # default configuration file
 ```
 

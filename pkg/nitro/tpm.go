@@ -1,4 +1,4 @@
-package app
+package nitro
 
 import (
 	"bytes"
@@ -45,38 +45,38 @@ const (
 	tpmAlgSHA256 uint16 = 0x000B
 )
 
-// NitroTPM manages the TPM device for NitroTPM attestation.
+// TPM manages the TPM device for NitroTPM attestation.
 // All device access is serialized by an internal mutex.
-type NitroTPM struct {
+type TPM struct {
 	mu  sync.Mutex
 	dev *os.File
 }
 
-// OpenNitroTPM opens the TPM device for attestation.
+// OpenTPM opens the TPM device for attestation.
 //
 // The device is opened via syscall.Open so that the file descriptor stays in
 // blocking mode. Go's os.OpenFile puts fds into non-blocking mode and routes
 // I/O through the runtime poller (epoll), which does not work reliably with
 // the /dev/tpm0 character device: the TPM driver's poll() may report "ready"
 // before the response is actually available, causing read() to return 0 bytes.
-func OpenNitroTPM() (*NitroTPM, error) {
+func OpenTPM() (*TPM, error) {
 	fd, err := syscall.Open(tpmDevicePath, syscall.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", tpmDevicePath, err)
 	}
 	f := os.NewFile(uintptr(fd), tpmDevicePath)
-	return &NitroTPM{dev: f}, nil
+	return &TPM{dev: f}, nil
 }
 
 // Close closes the TPM device.
-func (n *NitroTPM) Close() error {
+func (n *TPM) Close() error {
 	return n.dev.Close()
 }
 
 // Attest obtains an NSM attestation document via the NitroTPM vendor command.
 // The nonce is included in the CBOR-encoded NSM attestation request sent through
 // the TPM NV buffer.
-func (n *NitroTPM) Attest(nonce []byte) ([]byte, error) {
+func (n *TPM) Attest(nonce []byte) ([]byte, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -120,7 +120,7 @@ func (n *NitroTPM) Attest(nonce []byte) ([]byte, error) {
 }
 
 // nvDefineSpace allocates an NV index for the NSM request/response buffer.
-func (n *NitroTPM) nvDefineSpace() error {
+func (n *TPM) nvDefineSpace() error {
 	// TPMS_NV_PUBLIC: nvIndex(4) + nameAlg(2) + attributes(4) + authPolicy(2, empty) + dataSize(2)
 	nvPub := make([]byte, 0, 14)
 	nvPub = binary.BigEndian.AppendUint32(nvPub, nvIndex)
@@ -129,7 +129,7 @@ func (n *NitroTPM) nvDefineSpace() error {
 	nvPub = binary.BigEndian.AppendUint16(nvPub, 0) // empty authPolicy
 	nvPub = binary.BigEndian.AppendUint16(nvPub, nvBufferSize)
 
-	// Parameters: TPM2B_AUTH (empty) + TPM2B_NV_PUBLIC
+	// Parameters: TPM2B_Auth (empty) + TPM2B_NV_PUBLIC
 	params := make([]byte, 0, 2+2+len(nvPub))
 	params = binary.BigEndian.AppendUint16(params, 0)                  // TPM2B_AUTH: empty
 	params = binary.BigEndian.AppendUint16(params, uint16(len(nvPub))) // TPM2B_NV_PUBLIC size
@@ -140,13 +140,13 @@ func (n *NitroTPM) nvDefineSpace() error {
 }
 
 // nvUndefineSpace frees the NV index.
-func (n *NitroTPM) nvUndefineSpace() error {
+func (n *TPM) nvUndefineSpace() error {
 	_, err := n.execCommand(tpmCCNVUndefineSpace, []uint32{tpmRHOwner, nvIndex}, nil)
 	return err
 }
 
 // nvWrite writes a chunk of data to the NV index at the given offset.
-func (n *NitroTPM) nvWrite(data []byte, offset uint16) error {
+func (n *TPM) nvWrite(data []byte, offset uint16) error {
 	// Parameters: TPM2B_MAX_NV_BUFFER + offset
 	params := make([]byte, 0, 2+len(data)+2)
 	params = binary.BigEndian.AppendUint16(params, uint16(len(data)))
@@ -158,7 +158,7 @@ func (n *NitroTPM) nvWrite(data []byte, offset uint16) error {
 }
 
 // nvWriteAll writes all data to the NV index, chunking as needed.
-func (n *NitroTPM) nvWriteAll(data []byte) error {
+func (n *TPM) nvWriteAll(data []byte) error {
 	for off := 0; off < len(data); off += nvMaxChunk {
 		end := off + nvMaxChunk
 		if end > len(data) {
@@ -172,7 +172,7 @@ func (n *NitroTPM) nvWriteAll(data []byte) error {
 }
 
 // nvRead reads a chunk of data from the NV index at the given offset.
-func (n *NitroTPM) nvRead(size, offset uint16) ([]byte, error) {
+func (n *TPM) nvRead(size, offset uint16) ([]byte, error) {
 	params := make([]byte, 0, 4)
 	params = binary.BigEndian.AppendUint16(params, size)
 	params = binary.BigEndian.AppendUint16(params, offset)
@@ -194,7 +194,7 @@ func (n *NitroTPM) nvRead(size, offset uint16) ([]byte, error) {
 }
 
 // nvReadAll reads the full NV buffer contents.
-func (n *NitroTPM) nvReadAll() ([]byte, error) {
+func (n *TPM) nvReadAll() ([]byte, error) {
 	buf := make([]byte, 0, nvBufferSize)
 	for off := uint16(0); off < nvBufferSize; off += uint16(nvMaxChunk) {
 		remaining := nvBufferSize - off
@@ -213,14 +213,14 @@ func (n *NitroTPM) nvReadAll() ([]byte, error) {
 
 // vendorNSMRequest sends the AWS NitroTPM vendor command that triggers the NSM
 // to process the request stored in the NV buffer and write the response back.
-func (n *NitroTPM) vendorNSMRequest() error {
+func (n *TPM) vendorNSMRequest() error {
 	_, err := n.execCommand(tpmCCVendorNSM, []uint32{nvIndex, nvIndex}, nil)
 	return err
 }
 
 // execCommand sends a raw TPM2 command (with password auth) and returns the
 // response parameters.
-func (n *NitroTPM) execCommand(cc uint32, handles []uint32, params []byte) ([]byte, error) {
+func (n *TPM) execCommand(cc uint32, handles []uint32, params []byte) ([]byte, error) {
 	cmd := buildTPMCommand(cc, handles, params)
 
 	if _, err := n.dev.Write(cmd); err != nil {

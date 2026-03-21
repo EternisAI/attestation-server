@@ -1,7 +1,8 @@
-package app
+package sevsnp
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -13,26 +14,34 @@ import (
 	"github.com/google/go-sev-guest/verify"
 )
 
-// SEVSNP manages the SEV-SNP guest device for attestation.
+// HexBytes is a byte slice that serializes to a hex-encoded JSON string
+// instead of the default base64.
+type HexBytes []byte
+
+func (h HexBytes) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + hex.EncodeToString(h) + `"`), nil
+}
+
+// Device manages the SEV-SNP guest device for attestation.
 // All device access is serialized by an internal mutex because the underlying
 // LinuxDevice performs multiple ioctls per attestation request and has no
 // built-in synchronization.
-type SEVSNP struct {
+type Device struct {
 	mu  sync.Mutex
 	dev client.Device
 }
 
-// OpenSEVSNP opens the SEV-SNP guest device for attestation.
-func OpenSEVSNP() (*SEVSNP, error) {
+// Open opens the SEV-SNP guest device for attestation.
+func Open() (*Device, error) {
 	dev, err := client.OpenDevice()
 	if err != nil {
 		return nil, fmt.Errorf("opening sev-snp device: %w", err)
 	}
-	return &SEVSNP{dev: dev}, nil
+	return &Device{dev: dev}, nil
 }
 
 // Close closes the SEV-SNP guest device.
-func (s *SEVSNP) Close() error {
+func (s *Device) Close() error {
 	return s.dev.Close()
 }
 
@@ -40,7 +49,7 @@ func (s *SEVSNP) Close() error {
 // report data at the specified VMPL. It returns the concatenated raw report +
 // certificate table (parseable by abi.ReportCertsToProto) and the verified
 // parsed report.
-func (s *SEVSNP) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, error) {
+func (s *Device) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -49,7 +58,7 @@ func (s *SEVSNP) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, err
 		return nil, nil, fmt.Errorf("sev-snp attestation request failed: %w", err)
 	}
 
-	report, err := verifySEVSNPAttestation(rawReport, certTable, reportData, s.dev.Product())
+	report, err := VerifyAttestation(rawReport, certTable, reportData, s.dev.Product())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -61,10 +70,10 @@ func (s *SEVSNP) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, err
 	return blob, report, nil
 }
 
-// verifySEVSNPAttestation parses the raw report and certificate table, verifies
+// VerifyAttestation parses the raw report and certificate table, verifies
 // the ECDSA-P384 signature against AMD's built-in trust roots (offline, no CRL
 // check), and validates that the report data field matches the expected value.
-func verifySEVSNPAttestation(rawReport, certTable []byte, expectedReportData [64]byte, product *spb.SevProduct) (*spb.Report, error) {
+func VerifyAttestation(rawReport, certTable []byte, expectedReportData [64]byte, product *spb.SevProduct) (*spb.Report, error) {
 	report, err := abi.ReportToProto(rawReport)
 	if err != nil {
 		return nil, fmt.Errorf("parsing sev-snp report: %w", err)
@@ -97,50 +106,52 @@ func verifySEVSNPAttestation(rawReport, certTable []byte, expectedReportData [64
 	return report, nil
 }
 
-// SEVSNPAttestationData contains select fields from a verified SEV-SNP
+// AttestationData contains select fields from a verified SEV-SNP
 // attestation report, included in the API response for convenience.
-type SEVSNPAttestationData struct {
-	Version          uint32         `json:"version"`
-	GuestSvn         uint32         `json:"guest_svn"`
-	Policy           uint64         `json:"policy"`
-	FamilyID         HexBytes       `json:"family_id"`
-	ImageID          HexBytes       `json:"image_id"`
-	VMPL             uint32         `json:"vmpl"`
-	ReportData       HexBytes       `json:"report_data"`
-	Measurement      HexBytes       `json:"measurement"`
-	HostData         HexBytes       `json:"host_data"`
-	IDKeyDigest      HexBytes       `json:"id_key_digest"`
-	AuthorKeyDigest  HexBytes       `json:"author_key_digest"`
-	ReportID         HexBytes       `json:"report_id"`
-	ReportIDMA       HexBytes       `json:"report_id_ma"`
-	ChipID           HexBytes       `json:"chip_id"`
-	CurrentTCB       SEVSNPTCBParts `json:"current_tcb"`
-	ReportedTCB      SEVSNPTCBParts `json:"reported_tcb"`
-	CommittedTCB     SEVSNPTCBParts `json:"committed_tcb"`
-	LaunchTCB        SEVSNPTCBParts `json:"launch_tcb"`
-	CurrentVersion   SEVSNPFirmware `json:"current_version"`
-	CommittedVersion SEVSNPFirmware `json:"committed_version"`
-	PlatformInfo     uint64         `json:"platform_info"`
-	SignerInfo       uint32         `json:"signer_info"`
+type AttestationData struct {
+	Version          uint32   `json:"version"`
+	GuestSvn         uint32   `json:"guest_svn"`
+	Policy           uint64   `json:"policy"`
+	FamilyID         HexBytes `json:"family_id"`
+	ImageID          HexBytes `json:"image_id"`
+	VMPL             uint32   `json:"vmpl"`
+	ReportData       HexBytes `json:"report_data"`
+	Measurement      HexBytes `json:"measurement"`
+	HostData         HexBytes `json:"host_data"`
+	IDKeyDigest      HexBytes `json:"id_key_digest"`
+	AuthorKeyDigest  HexBytes `json:"author_key_digest"`
+	ReportID         HexBytes `json:"report_id"`
+	ReportIDMA       HexBytes `json:"report_id_ma"`
+	ChipID           HexBytes `json:"chip_id"`
+	CurrentTCB       TCBParts `json:"current_tcb"`
+	ReportedTCB      TCBParts `json:"reported_tcb"`
+	CommittedTCB     TCBParts `json:"committed_tcb"`
+	LaunchTCB        TCBParts `json:"launch_tcb"`
+	CurrentVersion   Firmware `json:"current_version"`
+	CommittedVersion Firmware `json:"committed_version"`
+	PlatformInfo     uint64   `json:"platform_info"`
+	SignerInfo       uint32   `json:"signer_info"`
 }
 
-// SEVSNPTCBParts holds the decomposed components of a 64-bit TCB version.
-type SEVSNPTCBParts struct {
+// TCBParts holds the decomposed components of a 64-bit TCB version.
+type TCBParts struct {
 	BootloaderSPL uint8 `json:"bootloader_spl"`
 	TEESPL        uint8 `json:"tee_spl"`
 	SNPSPL        uint8 `json:"snp_spl"`
 	MicrocodeSPL  uint8 `json:"microcode_spl"`
 }
 
-// SEVSNPFirmware holds firmware version information.
-type SEVSNPFirmware struct {
+// Firmware holds firmware version information.
+type Firmware struct {
 	Build uint32 `json:"build"`
 	Minor uint32 `json:"minor"`
 	Major uint32 `json:"major"`
 }
 
-func sevsnpAttestationData(report *spb.Report) *SEVSNPAttestationData {
-	return &SEVSNPAttestationData{
+// NewAttestationData extracts the select API response fields from a verified
+// SEV-SNP report.
+func NewAttestationData(report *spb.Report) *AttestationData {
+	return &AttestationData{
 		Version:         report.Version,
 		GuestSvn:        report.GuestSvn,
 		Policy:          report.Policy,
@@ -159,12 +170,12 @@ func sevsnpAttestationData(report *spb.Report) *SEVSNPAttestationData {
 		ReportedTCB:     decomposeTCB(report.ReportedTcb),
 		CommittedTCB:    decomposeTCB(report.CommittedTcb),
 		LaunchTCB:       decomposeTCB(report.LaunchTcb),
-		CurrentVersion: SEVSNPFirmware{
+		CurrentVersion: Firmware{
 			Build: report.CurrentBuild,
 			Minor: report.CurrentMinor,
 			Major: report.CurrentMajor,
 		},
-		CommittedVersion: SEVSNPFirmware{
+		CommittedVersion: Firmware{
 			Build: report.CommittedBuild,
 			Minor: report.CommittedMinor,
 			Major: report.CommittedMajor,
@@ -174,9 +185,9 @@ func sevsnpAttestationData(report *spb.Report) *SEVSNPAttestationData {
 	}
 }
 
-func decomposeTCB(v uint64) SEVSNPTCBParts {
+func decomposeTCB(v uint64) TCBParts {
 	parts := kds.DecomposeTCBVersion(kds.TCBVersion(v))
-	return SEVSNPTCBParts{
+	return TCBParts{
 		BootloaderSPL: parts.BlSpl,
 		TEESPL:        parts.TeeSpl,
 		SNPSPL:        parts.SnpSpl,

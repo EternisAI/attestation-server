@@ -1,4 +1,4 @@
-package app
+package tpm
 
 import (
 	"encoding/hex"
@@ -9,15 +9,15 @@ import (
 	"github.com/google/go-tpm/tpm2/transport/linuxtpm"
 )
 
-const tpmRMDevicePath = "/dev/tpmrm0"
+const devicePath = "/dev/tpmrm0"
 
-// ReadTPMPCRs opens the TPM resource manager device, reads all 24 PCR values
+// ReadPCRs opens the TPM resource manager device, reads all 24 PCR values
 // for the given hash algorithm, and returns them as hex-encoded strings keyed
 // by PCR index.
-func ReadTPMPCRs(alg tpm2.TPMAlgID) (map[string]string, error) {
-	t, err := linuxtpm.Open(tpmRMDevicePath)
+func ReadPCRs(alg tpm2.TPMAlgID) (map[string]string, error) {
+	t, err := linuxtpm.Open(devicePath)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", tpmRMDevicePath, err)
+		return nil, fmt.Errorf("opening %s: %w", devicePath, err)
 	}
 	defer t.Close()
 

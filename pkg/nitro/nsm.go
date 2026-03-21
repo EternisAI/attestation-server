@@ -1,4 +1,4 @@
-package app
+package nitro
 
 import (
 	"fmt"
@@ -8,31 +8,31 @@ import (
 	"github.com/hf/nsm/request"
 )
 
-// NitroNSM manages the Nitro NSM device session for attestation.
+// NSM manages the Nitro NSM device session for attestation.
 // All device access is serialized by an internal mutex because the nsm
 // library does not synchronize the underlying ioctl syscall on the shared
 // /dev/nsm fd.
-type NitroNSM struct {
+type NSM struct {
 	mu   sync.Mutex
 	sess *nsm.Session
 }
 
-// OpenNitroNSM opens the default NSM session for attestation.
-func OpenNitroNSM() (*NitroNSM, error) {
+// OpenNSM opens the default NSM session for attestation.
+func OpenNSM() (*NSM, error) {
 	sess, err := nsm.OpenDefaultSession()
 	if err != nil {
 		return nil, fmt.Errorf("opening nsm session: %w", err)
 	}
-	return &NitroNSM{sess: sess}, nil
+	return &NSM{sess: sess}, nil
 }
 
 // Close closes the NSM session.
-func (n *NitroNSM) Close() error {
+func (n *NSM) Close() error {
 	return n.sess.Close()
 }
 
 // Attest obtains an NSM attestation document with the given nonce.
-func (n *NitroNSM) Attest(nonce []byte) ([]byte, error) {
+func (n *NSM) Attest(nonce []byte) ([]byte, error) {
 	n.mu.Lock()
 	res, err := n.sess.Send(&request.Attestation{
 		Nonce: nonce,
