@@ -9,7 +9,6 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
-	"github.com/hf/nsm/request"
 )
 
 func (s *Server) handleAttestation(c *fiber.Ctx) error {
@@ -106,7 +105,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	// Collect attestation evidence.
 	// NitroNSM and TDX are exclusive and return immediately.
 	if s.cfg.ReportEvidence.NitroNSM {
-		blob, err := s.attestNitroNSM(digest[:])
+		blob, err := s.nitroNSM.Attest(digest[:])
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
 		}
@@ -188,31 +187,6 @@ func (s *Server) attestNitroTPM(nonce []byte) ([]byte, error) {
 		return nil, fmt.Errorf("tpm attestation request failed: %w", err)
 	}
 	return doc, nil
-}
-
-func (s *Server) attestNitroNSM(nonce []byte) ([]byte, error) {
-	// The nsm library's Send uses sync.Pool for serialization buffers but does
-	// not synchronize the underlying ioctl syscall on the shared /dev/nsm fd.
-	// Concurrent ioctls could interleave request/response pairings, so we
-	// serialize all NSM device access.
-	s.nsmMu.Lock()
-	res, err := s.nsm.Send(&request.Attestation{
-		Nonce: nonce,
-	})
-	s.nsmMu.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("nsm attestation request failed: %w", err)
-	}
-	if res.Error != "" {
-		return nil, fmt.Errorf("nsm returned error: %s", res.Error)
-	}
-	if res.Attestation == nil {
-		return nil, fmt.Errorf("nsm response missing attestation field")
-	}
-	if res.Attestation.Document == nil {
-		return nil, fmt.Errorf("nsm response missing attestation document")
-	}
-	return res.Attestation.Document, nil
 }
 
 // extractXFCCHash extracts the Hash field from an x-forwarded-client-cert

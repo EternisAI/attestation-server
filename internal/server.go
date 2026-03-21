@@ -10,13 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
-	"github.com/hf/nsm"
 )
 
 // Server wraps a Fiber application with its dependencies.
@@ -27,8 +25,7 @@ type Server struct {
 	buildInfo    *BuildInfo
 	endorsements []*url.URL
 	certs        tlsCertificates
-	nsm          *nsm.Session
-	nsmMu        sync.Mutex
+	nitroNSM     *NitroNSM
 	nitroTPM     *NitroTPM
 	sevSNP       *SEVSNP
 	tdx          *TDX
@@ -100,11 +97,11 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	if cfg.ReportEvidence.NitroNSM {
-		sess, err := nsm.OpenDefaultSession()
+		nsmDev, err := OpenNitroNSM()
 		if err != nil {
-			return nil, fmt.Errorf("opening nitro nsm session: %w", err)
+			return nil, fmt.Errorf("opening nitro nsm: %w", err)
 		}
-		s.nsm = sess
+		s.nitroNSM = nsmDev
 		logger.Info("opened nitro nsm session")
 	}
 

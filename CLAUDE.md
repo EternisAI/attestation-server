@@ -17,6 +17,7 @@ internal/attestation.go    # GET /api/v1/attestation handler and helpers (packag
 internal/config.go         # Config struct and LoadConfig() (package app)
 internal/logging.go        # NewLogger() (package app)
 internal/nitro.go          # Shared Nitro attestation: COSE_Sign1 verification, cert chain validation, embedded AWS Nitro root CA (package app)
+internal/nitronsm.go       # NitroNSM device access and attestation via /dev/nsm (package app)
 internal/nitrotpm.go       # NitroTPM device access and attestation via raw TPM2 protocol over /dev/tpm0 (package app)
 internal/sevsnp.go         # SEV-SNP device access, attestation via go-sev-guest, signature verification, report parsing (package app)
 internal/tdx.go            # Intel TDX device access, attestation via go-tdx-guest, quote verification, report parsing (package app)
