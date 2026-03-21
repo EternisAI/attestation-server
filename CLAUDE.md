@@ -66,11 +66,11 @@ tdx         = false
 enabled   = false
 algorithm = "sha384"
 
-[secure_boot]
-enforce = false
-
 [report.user_data]
 env = []
+
+[secure_boot]
+enforce = false
 
 [tls.public]
 cert_path = ""
