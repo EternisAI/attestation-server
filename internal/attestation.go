@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
@@ -77,11 +78,13 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 
 	var tpmPCRs map[string]string
 	if s.cfg.TPM.Enabled {
+		start := time.Now()
 		var err error
 		tpmPCRs, err = ReadTPMPCRs(s.cfg.TPM.Algorithm)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tpm: %v", err))
 		}
+		s.logger.Debug("tpm pcr read complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 	}
 
 	reportData := &AttestationReportData{
@@ -105,6 +108,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	// Collect attestation evidence.
 	// NitroNSM and TDX are exclusive and return immediately.
 	if s.cfg.ReportEvidence.NitroNSM {
+		start := time.Now()
 		blob, err := s.nitroNSM.Attest(digest[:])
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
@@ -113,6 +117,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
 		}
+		s.logger.Debug("nitronsm attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		report := &AttestationReport{
 			Data: reportData,
 			Evidence: []*AttestationEvidence{
@@ -124,10 +129,12 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	}
 
 	if s.cfg.ReportEvidence.TDX {
+		start := time.Now()
 		blob, quote, err := s.tdx.Attest(digest)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tdx: %v", err))
 		}
+		s.logger.Debug("tdx attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		report := &AttestationReport{
 			Data: reportData,
 			Evidence: []*AttestationEvidence{
@@ -143,6 +150,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 
 	var nitroTPMBlob []byte
 	if s.cfg.ReportEvidence.NitroTPM {
+		start := time.Now()
 		blob, err := s.attestNitroTPM(digest[:])
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
@@ -151,11 +159,13 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
 		}
+		s.logger.Debug("nitrotpm attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		nitroTPMBlob = blob
 		evidence = append(evidence, &AttestationEvidence{Kind: "nitrotpm", Blob: blob, Data: nitroAttestationData(doc)})
 	}
 
 	if s.cfg.ReportEvidence.SEVSNP {
+		start := time.Now()
 		var snpReportData [64]byte
 		if nitroTPMBlob != nil {
 			snpReportData = sha512.Sum512(nitroTPMBlob)
@@ -166,6 +176,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("sevsnp: %v", err))
 		}
+		s.logger.Debug("sevsnp attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		evidence = append(evidence, &AttestationEvidence{Kind: "sevsnp", Blob: blob, Data: sevsnpAttestationData(report)})
 	}
 
