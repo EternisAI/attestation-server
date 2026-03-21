@@ -19,6 +19,10 @@ sevsnp      = false
 sevsnp_vmpl = 0
 tdx         = false
 
+[tpm]
+enabled   = false
+algorithm = "sha384"  # sha1, sha256, sha384, sha512
+
 [report.user_data]
 env = []  # optional; environment variable names to include
 

@@ -60,13 +60,14 @@ type AttestationEvidence struct {
 }
 
 type AttestationReportData struct {
-	RequestID    string         `json:"request_id"`
-	Nonce        string         `json:"nonce,omitempty"`
-	BuildInfo    *BuildInfo     `json:"build_info"`
-	TLS          *TLSReportData `json:"tls"`
-	Endorsements []string       `json:"endorsements"`
-	UserData     map[string]any `json:"user_data,omitempty"`
-	SecureBoot   *bool          `json:"secure_boot,omitempty"`
+	RequestID    string            `json:"request_id"`
+	Nonce        string            `json:"nonce,omitempty"`
+	BuildInfo    *BuildInfo        `json:"build_info"`
+	TLS          *TLSReportData    `json:"tls"`
+	Endorsements []string          `json:"endorsements"`
+	UserData     map[string]any    `json:"user_data,omitempty"`
+	SecureBoot   *bool             `json:"secure_boot,omitempty"`
+	TPMPCRs      map[string]string `json:"tpm_pcrs,omitempty"`
 }
 
 type TLSReportData struct {

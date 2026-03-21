@@ -94,6 +94,11 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		logger.Info("read secure boot state", "enabled", *sbState)
 	}
 
+	if cfg.TPM.Enabled && cfg.ReportEvidence.NitroTPM {
+		logger.Warn("tpm pcr reading disabled because nitrotpm evidence already includes pcr values")
+		cfg.TPM.Enabled = false
+	}
+
 	if cfg.ReportEvidence.NitroNSM {
 		sess, err := nsm.OpenDefaultSession()
 		if err != nil {

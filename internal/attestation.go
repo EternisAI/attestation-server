@@ -76,6 +76,15 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		}
 	}
 
+	var tpmPCRs map[string]string
+	if s.cfg.TPM.Enabled {
+		var err error
+		tpmPCRs, err = ReadTPMPCRs(s.cfg.TPM.Algorithm)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tpm: %v", err))
+		}
+	}
+
 	reportData := &AttestationReportData{
 		RequestID:    requestID,
 		Nonce:        nonce,
@@ -84,6 +93,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		Endorsements: endorsements,
 		UserData:     userData,
 		SecureBoot:   s.secureBoot,
+		TPMPCRs:      tpmPCRs,
 	}
 
 	data, err := json.MarshalWithOption(reportData, json.DisableHTMLEscape())

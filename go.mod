@@ -9,6 +9,7 @@ require (
 	github.com/gofiber/fiber/v2 v2.52.12
 	github.com/google/go-sev-guest v0.14.1
 	github.com/google/go-tdx-guest v0.3.1
+	github.com/google/go-tpm v0.9.8
 	github.com/google/uuid v1.6.0
 	github.com/hf/nsm v0.0.0-20220930140112-cd181bd646b9
 	github.com/spf13/cobra v1.10.2

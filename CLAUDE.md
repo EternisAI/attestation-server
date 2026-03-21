@@ -20,6 +20,7 @@ internal/nitro.go          # Shared Nitro attestation: COSE_Sign1 verification, 
 internal/nitrotpm.go       # NitroTPM device access and attestation via raw TPM2 protocol over /dev/tpm0 (package app)
 internal/sevsnp.go         # SEV-SNP device access, attestation via go-sev-guest, signature verification, report parsing (package app)
 internal/tdx.go            # Intel TDX device access, attestation via go-tdx-guest, quote verification, report parsing (package app)
+internal/tpm.go            # Generic TPM PCR reading via google/go-tpm over /dev/tpmrm0 (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS certificate loading and hot-reload (package app)
 internal/types.go          # BuildInfo, AttestationReport, AttestationReportData, and other shared structs (package app)
@@ -59,6 +60,10 @@ nitrotpm    = false
 sevsnp      = false
 sevsnp_vmpl = 0
 tdx         = false
+
+[tpm]
+enabled   = false
+algorithm = "sha384"
 
 [secure_boot]
 enforce = false
@@ -107,6 +112,8 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP` | `report.evidence.sevsnp` | `false` | Enable SEV-SNP evidence |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP_VMPL` | `report.evidence.sevsnp_vmpl` | `0` | VMPL level for SEV-SNP attestation (0–3) |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_TDX` | `report.evidence.tdx` | `false` | Enable Intel TDX evidence (exclusive: cannot combine with others) |
+| `ATTESTATION_SERVER_TPM_ENABLED` | `tpm.enabled` | `false` | Enable generic TPM PCR reading via /dev/tpmrm0; auto-disabled if NitroTPM evidence is enabled |
+| `ATTESTATION_SERVER_TPM_ALGORITHM` | `tpm.algorithm` | `sha384` | Hash algorithm for TPM PCR values: `sha1`/`sha256`/`sha384`/`sha512` (case-insensitive) |
 | `ATTESTATION_SERVER_SECURE_BOOT_ENFORCE` | `secure_boot.enforce` | `false` | Enforce UEFI Secure Boot; exit on startup if not enabled |
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Environment variable names to include in report (unique) |
 

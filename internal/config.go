@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/go-tpm/tpm2"
 	"github.com/spf13/viper"
 )
 
@@ -25,6 +26,13 @@ type Config struct {
 	ReportEvidence     EvidenceConfig
 	ReportEnvVars      []string
 	SecureBootEnforce  bool
+	TPM                TPMConfig
+}
+
+// TPMConfig holds the configuration for generic TPM PCR reading.
+type TPMConfig struct {
+	Enabled   bool
+	Algorithm tpm2.TPMAlgID
 }
 
 // EvidenceConfig holds the evidence type flags.
@@ -48,6 +56,15 @@ func LoadConfig() (*Config, error) {
 	if err := validateEvidence(evidence); err != nil {
 		return nil, err
 	}
+	tpmAlg, err := parseTPMAlgorithm(viper.GetString("tpm.algorithm"))
+	if err != nil {
+		return nil, err
+	}
+	tpmCfg := TPMConfig{
+		Enabled:   viper.GetBool("tpm.enabled"),
+		Algorithm: tpmAlg,
+	}
+
 	envVars := viper.GetStringSlice("report.user_data.env")
 	if err := validateEnvNames(envVars); err != nil {
 		return nil, err
@@ -67,6 +84,7 @@ func LoadConfig() (*Config, error) {
 		ReportEvidence:     evidence,
 		ReportEnvVars:      envVars,
 		SecureBootEnforce:  viper.GetBool("secure_boot.enforce"),
+		TPM:                tpmCfg,
 	}, nil
 }
 
@@ -117,6 +135,21 @@ func absPath(p string) string {
 		return p
 	}
 	return abs
+}
+
+func parseTPMAlgorithm(s string) (tpm2.TPMAlgID, error) {
+	switch strings.ToLower(s) {
+	case "sha1":
+		return tpm2.TPMAlgSHA1, nil
+	case "sha256":
+		return tpm2.TPMAlgSHA256, nil
+	case "sha384":
+		return tpm2.TPMAlgSHA384, nil
+	case "sha512":
+		return tpm2.TPMAlgSHA512, nil
+	default:
+		return 0, fmt.Errorf("tpm.algorithm: unsupported algorithm %q (valid: sha1, sha256, sha384, sha512)", s)
+	}
 }
 
 func parseLogLevel(s string) slog.Level {
