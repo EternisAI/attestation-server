@@ -157,6 +157,8 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	return s, nil
 }
 
+// loadBuildInfo reads and parses the JSON build information file (SLSA
+// provenance fields from sigstore/fulcio) at the given path.
 func loadBuildInfo(path string) (*BuildInfo, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -169,6 +171,8 @@ func loadBuildInfo(path string) (*BuildInfo, error) {
 	return &bi, nil
 }
 
+// loadEndorsements reads a JSON array of HTTPS URLs from the given path.
+// Each URL must have an https scheme and a non-empty host and path.
 func loadEndorsements(path string) ([]*url.URL, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

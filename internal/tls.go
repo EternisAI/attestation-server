@@ -20,20 +20,30 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// certReloadDebounce is the delay after a filesystem event before reloading
+// certificates. This coalesces rapid sequences of events (e.g. atomic file
+// replacement via rename) into a single reload.
 const certReloadDebounce = 500 * time.Millisecond
 
+// certBundle holds a loaded TLS certificate along with precomputed SHA-256
+// fingerprints of the leaf certificate and its SPKI public key.
 type certBundle struct {
 	cert              *tls.Certificate
 	certFingerprint   string
 	pubKeyFingerprint string
 }
 
+// tlsCertificates holds the current public and private certificate bundles
+// under a RWMutex so the hot-reload goroutine can swap them while request
+// handlers read them concurrently.
 type tlsCertificates struct {
 	mu      sync.RWMutex
 	public  *certBundle
 	private *certBundle
 }
 
+// validateTLSConfig checks that at least one TLS certificate set is configured
+// and that each set has both cert and key paths in the same directory.
 func validateTLSConfig(cfg *Config) error {
 	pubHasCert := cfg.PublicTLSCertPath != ""
 	pubHasKey := cfg.PublicTLSKeyPath != ""
@@ -79,6 +89,8 @@ func certKeyType(cert *tls.Certificate) string {
 	}
 }
 
+// computeFingerprints returns SHA-256 hex-encoded fingerprints of the leaf
+// certificate DER and its SPKI (SubjectPublicKeyInfo) DER.
 func computeFingerprints(cert *tls.Certificate) (certFP, pubKeyFP string, err error) {
 	if len(cert.Certificate) == 0 {
 		return "", "", fmt.Errorf("certificate has no DER data")
@@ -100,6 +112,8 @@ func computeFingerprints(cert *tls.Certificate) (certFP, pubKeyFP string, err er
 	return certFP, pubKeyFP, nil
 }
 
+// certLeafAttrs returns slog attributes describing the leaf certificate
+// (subject, SANs, validity period, fingerprints) for structured logging.
 func certLeafAttrs(b *certBundle) []slog.Attr {
 	if len(b.cert.Certificate) == 0 {
 		return nil
@@ -130,6 +144,9 @@ func joinSANs(dnsNames []string, ips []net.IP, uris []*url.URL) string {
 	return strings.Join(sans, ",")
 }
 
+// loadCertificates loads the initial public and/or private TLS certificates
+// from disk, validates key types, computes fingerprints, and stores them in
+// the server's tlsCertificates for use by request handlers.
 func (s *Server) loadCertificates() error {
 	if s.cfg.PublicTLSCertPath != "" {
 		cert, err := tls.LoadX509KeyPair(s.cfg.PublicTLSCertPath, s.cfg.PublicTLSKeyPath)
@@ -183,6 +200,9 @@ func (s *Server) loadCertificates() error {
 	return nil
 }
 
+// watchCertDir starts an fsnotify watcher on the given directory and calls
+// reload when certificate files change. Used for hot-reloading TLS certs
+// without restarting the server.
 func (s *Server) watchCertDir(ctx context.Context, dir string, name string, reload func()) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -200,6 +220,8 @@ func (s *Server) watchCertDir(ctx context.Context, dir string, name string, relo
 	return nil
 }
 
+// certWatchLoop is the event loop for a certificate directory watcher. It
+// debounces filesystem events and invokes reload after a quiet period.
 func (s *Server) certWatchLoop(ctx context.Context, watcher *fsnotify.Watcher, name string, reload func()) {
 	defer watcher.Close()
 

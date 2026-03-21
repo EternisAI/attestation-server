@@ -48,17 +48,27 @@ type BuildInfo struct {
 	DeploymentEnvironment string `json:"DeploymentEnvironment,omitempty"`
 }
 
+// AttestationReport is the top-level JSON response returned by the
+// attestation endpoint. It pairs the attestation evidence (hardware-signed
+// blobs) with the report data that was hashed into the evidence nonce.
 type AttestationReport struct {
 	Evidence []*AttestationEvidence `json:"evidence"`
 	Data     *AttestationReportData `json:"data"`
 }
 
+// AttestationEvidence holds one piece of hardware attestation evidence.
+// Kind identifies the TEE type (e.g. "nitronsm", "nitrotpm", "sevsnp", "tdx").
+// Blob is the raw attestation document/quote. Data contains parsed fields
+// from the verified evidence for convenience.
 type AttestationEvidence struct {
 	Kind string `json:"kind"`
 	Blob []byte `json:"blob"`
 	Data any    `json:"data,omitempty"`
 }
 
+// AttestationReportData contains everything the server binds into the
+// attestation nonce via SHA-512 hashing. A verifier can recompute the hash
+// from these fields and check it against the nonce inside the evidence blob.
 type AttestationReportData struct {
 	RequestID    string            `json:"request_id"`
 	Nonce        string            `json:"nonce,omitempty"`
@@ -70,12 +80,16 @@ type AttestationReportData struct {
 	TPMPCRs      map[string]string `json:"tpm_pcrs,omitempty"`
 }
 
+// TLSReportData groups TLS certificate fingerprints for the server's public
+// and private certificates as well as the client certificate (from XFCC header).
 type TLSReportData struct {
 	Client  *TLSCertificateData `json:"client,omitempty"`
 	Public  *TLSCertificateData `json:"public,omitempty"`
 	Private *TLSCertificateData `json:"private,omitempty"`
 }
 
+// TLSCertificateData holds SHA-256 hex-encoded fingerprints of a certificate
+// and its public key (SPKI DER).
 type TLSCertificateData struct {
 	CertificateFingerprint string `json:"certificate"`
 	PublicKeyFingerprint   string `json:"public_key,omitempty"`

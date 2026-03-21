@@ -88,6 +88,8 @@ func LoadConfig() (*Config, error) {
 	}, nil
 }
 
+// validateEvidence checks that at least one evidence type is enabled and that
+// exclusive types (NitroNSM, TDX) are not combined with others.
 func validateEvidence(e EvidenceConfig) error {
 	if !e.NitroNSM && !e.NitroTPM && !e.SEVSNP && !e.TDX {
 		return fmt.Errorf("report.evidence: at least one evidence type must be enabled")

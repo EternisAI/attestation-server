@@ -17,6 +17,11 @@ import (
 	"github.com/eternisai/attestation-server/pkg/tpm"
 )
 
+// handleAttestation serves GET /api/v1/attestation. It collects server
+// metadata into AttestationReportData, hashes it with SHA-512, then uses
+// that digest as the nonce for the configured TEE attestation mechanism(s).
+// The response pairs the raw evidence blob(s) with the report data so that
+// a verifier can recompute the digest and check it against the evidence.
 func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	requestID, _ := c.Locals("requestid").(string)
 
@@ -171,6 +176,9 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 
 	if s.cfg.ReportEvidence.SEVSNP {
 		start := time.Now()
+		// When NitroTPM evidence is also present, chain the two proofs by
+		// hashing the NitroTPM blob into the SEV-SNP report data. This lets
+		// a verifier confirm that both evidence blobs belong to the same request.
 		var snpReportData [64]byte
 		if nitroTPMBlob != nil {
 			snpReportData = sha512.Sum512(nitroTPMBlob)
@@ -197,6 +205,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	return c.JSON(report)
 }
 
+// attestNitroTPM obtains a Nitro attestation document via the NitroTPM device.
 func (s *Server) attestNitroTPM(nonce []byte) ([]byte, error) {
 	doc, err := s.nitroTPM.Attest(nonce)
 	if err != nil {

@@ -42,6 +42,8 @@ func init() {
 	_ = viper.BindPFlag("log.level", rootCmd.Flags().Lookup("log-level"))
 }
 
+// initConfig sets up viper defaults, binds environment variables, and reads
+// the TOML config file. Called by cobra.OnInitialize before command execution.
 func initConfig() {
 	viper.SetConfigType("toml")
 
@@ -107,6 +109,8 @@ func initConfig() {
 	}
 }
 
+// runServer loads configuration, sets up signal handling, and starts the
+// HTTP server. It blocks until the context is cancelled or a fatal error occurs.
 func runServer(cmd *cobra.Command, args []string) error {
 	cfg, err := app.LoadConfig()
 	if err != nil {
