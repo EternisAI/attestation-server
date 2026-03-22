@@ -163,7 +163,8 @@ The nonce/report_data is derived as `SHA-512(compact(report.data))`. Each verifi
 Fixture files:
 - `pkg/nitro/testdata/nitronsm_attestation.json`
 - `pkg/nitro/testdata/nitrotpm_attestation.json`
-- `pkg/sevsnp/testdata/sevsnp_attestation.json`
+- `pkg/sevsnp/testdata/sevsnp_attestation_aws.json`
+- `pkg/sevsnp/testdata/sevsnp_attestation_gcp.json`
 - `pkg/tdx/testdata/tdx_attestation.json`
 
 ## Development

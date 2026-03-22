@@ -236,84 +236,96 @@ func deriveReportData(t *testing.T, rawData json.RawMessage) [64]byte {
 }
 
 func TestVerifyAttestation(t *testing.T) {
-	f, ok := loadSEVSNPFixture(t, "sevsnp_attestation.json")
-	if !ok {
-		t.Skip("fixture testdata/sevsnp_attestation.json not found, skipping")
+	fixtures := []struct {
+		name     string
+		filename string
+	}{
+		{"aws", "sevsnp_attestation_aws.json"},
+		{"gcp", "sevsnp_attestation_gcp.json"},
 	}
 
-	if len(f.Report.Evidence) == 0 {
-		t.Fatal("fixture has no evidence entries")
-	}
-
-	blob, err := base64.StdEncoding.DecodeString(f.Report.Evidence[0].Blob)
-	if err != nil {
-		t.Fatalf("decoding blob: %v", err)
-	}
-
-	now, err := time.Parse(time.RFC3339Nano, f.Time)
-	if err != nil {
-		t.Fatalf("parsing time: %v", err)
-	}
-
-	reportData := deriveReportData(t, f.Report.Data)
-
-	// Split blob into raw report and certificate table.
-	// SEV-SNP raw report is always abi.ReportSize (0x4A0 = 1184) bytes.
-	if len(blob) < abi.ReportSize {
-		t.Fatalf("blob too short for SEV-SNP report: %d < %d", len(blob), abi.ReportSize)
-	}
-	rawReport := blob[:abi.ReportSize]
-	certTable := blob[abi.ReportSize:]
-
-	t.Run("valid", func(t *testing.T) {
-		report, err := VerifyAttestation(rawReport, certTable, reportData, nil, now)
-		if err != nil {
-			t.Fatalf("VerifyAttestation() error: %v", err)
-		}
-		if report.Version == 0 {
-			t.Error("report Version is zero")
-		}
-		if !bytes.Equal(report.ReportData, reportData[:]) {
-			t.Error("report ReportData does not match expected")
-		}
-
-		// Cross-check: verify that NewAttestationData produces JSON
-		// consistent with the fixture's evidence data.
-		got := NewAttestationData(report)
-		gotJSON, err := json.Marshal(got)
-		if err != nil {
-			t.Fatalf("marshaling NewAttestationData: %v", err)
-		}
-		fixtureEvidenceData := f.Report.Evidence[0].RawData
-		if len(fixtureEvidenceData) > 0 {
-			var fixtureCompact, gotCompact bytes.Buffer
-			json.Compact(&fixtureCompact, fixtureEvidenceData)
-			json.Compact(&gotCompact, gotJSON)
-			if fixtureCompact.String() != gotCompact.String() {
-				t.Errorf("NewAttestationData JSON mismatch\ngot:    %s\nfixture: %s", gotCompact.String(), fixtureCompact.String())
+	for _, fx := range fixtures {
+		t.Run(fx.name, func(t *testing.T) {
+			f, ok := loadSEVSNPFixture(t, fx.filename)
+			if !ok {
+				t.Skipf("fixture %s not found, skipping", fx.filename)
 			}
-		}
-	})
 
-	t.Run("wrong report data", func(t *testing.T) {
-		var wrong [64]byte
-		copy(wrong[:], reportData[:])
-		wrong[0] ^= 0xFF
-		_, err := VerifyAttestation(rawReport, certTable, wrong, nil, now)
-		if err == nil {
-			t.Fatal("VerifyAttestation() expected error for wrong report data")
-		}
-	})
+			if len(f.Report.Evidence) == 0 {
+				t.Fatal("fixture has no evidence entries")
+			}
 
-	t.Run("corrupted report", func(t *testing.T) {
-		corrupted := make([]byte, len(rawReport))
-		copy(corrupted, rawReport)
-		// Corrupt bytes in the signature area near the end of the report
-		corrupted[len(corrupted)-10] ^= 0xFF
-		corrupted[len(corrupted)-11] ^= 0xFF
-		_, err := VerifyAttestation(corrupted, certTable, reportData, nil, now)
-		if err == nil {
-			t.Fatal("VerifyAttestation() expected error for corrupted report")
-		}
-	})
+			blob, err := base64.StdEncoding.DecodeString(f.Report.Evidence[0].Blob)
+			if err != nil {
+				t.Fatalf("decoding blob: %v", err)
+			}
+
+			now, err := time.Parse(time.RFC3339Nano, f.Time)
+			if err != nil {
+				t.Fatalf("parsing time: %v", err)
+			}
+
+			reportData := deriveReportData(t, f.Report.Data)
+
+			// Split blob into raw report and certificate table.
+			// SEV-SNP raw report is always abi.ReportSize (0x4A0 = 1184) bytes.
+			if len(blob) < abi.ReportSize {
+				t.Fatalf("blob too short for SEV-SNP report: %d < %d", len(blob), abi.ReportSize)
+			}
+			rawReport := blob[:abi.ReportSize]
+			certTable := blob[abi.ReportSize:]
+
+			t.Run("valid", func(t *testing.T) {
+				report, err := VerifyAttestation(rawReport, certTable, reportData, nil, now)
+				if err != nil {
+					t.Fatalf("VerifyAttestation() error: %v", err)
+				}
+				if report.Version == 0 {
+					t.Error("report Version is zero")
+				}
+				if !bytes.Equal(report.ReportData, reportData[:]) {
+					t.Error("report ReportData does not match expected")
+				}
+
+				// Cross-check: verify that NewAttestationData produces JSON
+				// consistent with the fixture's evidence data.
+				got := NewAttestationData(report)
+				gotJSON, err := json.Marshal(got)
+				if err != nil {
+					t.Fatalf("marshaling NewAttestationData: %v", err)
+				}
+				fixtureEvidenceData := f.Report.Evidence[0].RawData
+				if len(fixtureEvidenceData) > 0 {
+					var fixtureCompact, gotCompact bytes.Buffer
+					json.Compact(&fixtureCompact, fixtureEvidenceData)
+					json.Compact(&gotCompact, gotJSON)
+					if fixtureCompact.String() != gotCompact.String() {
+						t.Errorf("NewAttestationData JSON mismatch\ngot:    %s\nfixture: %s", gotCompact.String(), fixtureCompact.String())
+					}
+				}
+			})
+
+			t.Run("wrong report data", func(t *testing.T) {
+				var wrong [64]byte
+				copy(wrong[:], reportData[:])
+				wrong[0] ^= 0xFF
+				_, err := VerifyAttestation(rawReport, certTable, wrong, nil, now)
+				if err == nil {
+					t.Fatal("VerifyAttestation() expected error for wrong report data")
+				}
+			})
+
+			t.Run("corrupted report", func(t *testing.T) {
+				corrupted := make([]byte, len(rawReport))
+				copy(corrupted, rawReport)
+				// Corrupt bytes in the signature area near the end of the report
+				corrupted[len(corrupted)-10] ^= 0xFF
+				corrupted[len(corrupted)-11] ^= 0xFF
+				_, err := VerifyAttestation(corrupted, certTable, reportData, nil, now)
+				if err == nil {
+					t.Fatal("VerifyAttestation() expected error for corrupted report")
+				}
+			})
+		})
+	}
 }
