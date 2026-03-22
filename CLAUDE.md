@@ -129,6 +129,16 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 ## Code style
 
 - All Go code must be `go fmt`-conformant. Always run `go fmt ./...` before committing.
+- Use `github.com/goccy/go-json` everywhere instead of `encoding/json`. The attestation handler marshals report data with `json.MarshalWithOption(..., json.DisableHTMLEscape())` for the nonce digest, then embeds those exact bytes (via `json.RawMessage`) in the response to guarantee byte-for-byte consistency.
+
+## SEV-SNP workarounds (pkg/sevsnp)
+
+`VerifyAttestation` implements its own verification flow instead of using `verify.SnpAttestation` from go-sev-guest (v0.14.1) to work around three library issues affecting cloud platforms like AWS Nitro. The workarounds are documented in the function's doc comment. Key constraints:
+
+- **Do not replace with `verify.SnpAttestation`** — it will fail on AWS due to unknown policy bits, malformed ASK/ARK certs in the certificate table, and proto round-trip breaking the signature.
+- **Do not remove `reportToProto`** — it sanitises policy bits for parsing while preserving the original value for the API response.
+- **Do not remove `trustedRoots`** — these pre-parsed AMD root certs bypass the malformed certificate table entries.
+- These workarounds can be revisited when go-sev-guest ships a release including [PR #181](https://github.com/google/go-sev-guest/pull/181) and fixes certificate table handling.
 
 ## Development
 
