@@ -108,12 +108,12 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		TPMPCRs:      tpmPCRs,
 	}
 
-	data, err := json.MarshalWithOption(reportData, json.DisableHTMLEscape())
+	reportDataJSON, err := json.MarshalWithOption(reportData, json.DisableHTMLEscape())
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to marshal report data")
 	}
 
-	digest := sha512.Sum512(data)
+	digest := sha512.Sum512(reportDataJSON)
 
 	// Collect attestation evidence.
 	// NitroNSM and TDX are exclusive and return immediately.
@@ -129,13 +129,11 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		}
 		s.logger.Debug("nitronsm attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		report := &AttestationReport{
-			Data: reportData,
 			Evidence: []*AttestationEvidence{
 				{Kind: "nitronsm", Blob: blob, Data: nitro.NewAttestationData(doc)},
 			},
 		}
-		c.Set("Content-Type", "application/json")
-		return c.JSON(report)
+		return sendReport(c, report, reportDataJSON)
 	}
 
 	if s.cfg.ReportEvidence.TDX {
@@ -146,13 +144,11 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		}
 		s.logger.Debug("tdx attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		report := &AttestationReport{
-			Data: reportData,
 			Evidence: []*AttestationEvidence{
 				{Kind: "tdx", Blob: blob, Data: tdx.NewAttestationData(quote)},
 			},
 		}
-		c.Set("Content-Type", "application/json")
-		return c.JSON(report)
+		return sendReport(c, report, reportDataJSON)
 	}
 
 	// Non-exclusive evidence types can be combined.
@@ -198,11 +194,24 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	}
 
 	report := &AttestationReport{
-		Data:     reportData,
 		Evidence: evidence,
 	}
+	return sendReport(c, report, reportDataJSON)
+}
+
+// sendReport marshals the AttestationReport with the same settings used
+// for the nonce digest (DisableHTMLEscape) and writes it as the response
+// body. The reportDataJSON is the pre-marshaled AttestationReportData
+// that was hashed into the attestation nonce; it is embedded directly as
+// the "data" field so that verifiers see byte-for-byte identical JSON.
+func sendReport(c *fiber.Ctx, report *AttestationReport, reportDataJSON []byte) error {
+	report.Data = json.RawMessage(reportDataJSON)
+	body, err := json.MarshalWithOption(report, json.DisableHTMLEscape())
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to marshal attestation report")
+	}
 	c.Set("Content-Type", "application/json")
-	return c.JSON(report)
+	return c.Send(body)
 }
 
 // attestNitroTPM obtains a Nitro attestation document via the NitroTPM device.

@@ -1,5 +1,7 @@
 package app
 
+import "github.com/goccy/go-json"
+
 // Fields sourced from: https://github.com/sigstore/fulcio/blob/v1.8.5/pkg/certificate/extensions.go#L60
 type BuildInfo struct {
 	// Reference to specific build instructions that are responsible for signing.
@@ -51,9 +53,12 @@ type BuildInfo struct {
 // AttestationReport is the top-level JSON response returned by the
 // attestation endpoint. It pairs the attestation evidence (hardware-signed
 // blobs) with the report data that was hashed into the evidence nonce.
+// Data is stored as json.RawMessage so that the pre-marshaled report data
+// bytes used for the nonce digest appear byte-for-byte identical in the
+// response.
 type AttestationReport struct {
 	Evidence []*AttestationEvidence `json:"evidence"`
-	Data     *AttestationReportData `json:"data"`
+	Data     json.RawMessage        `json:"data"`
 }
 
 // AttestationEvidence holds one piece of hardware attestation evidence.
