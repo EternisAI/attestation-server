@@ -495,6 +495,190 @@ func TestAbsPath(t *testing.T) {
 	}
 }
 
+func TestParseDependencyEndpoints(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []string
+		wantLen int
+		wantErr string
+	}{
+		{
+			name:    "empty list",
+			input:   []string{},
+			wantLen: 0,
+		},
+		{
+			name:    "nil list",
+			input:   nil,
+			wantLen: 0,
+		},
+		{
+			name:    "single http endpoint",
+			input:   []string{"http://host1:8187/api/v1/attestation"},
+			wantLen: 1,
+		},
+		{
+			name:    "single https endpoint",
+			input:   []string{"https://host1:8187/api/v1/attestation"},
+			wantLen: 1,
+		},
+		{
+			name:    "multiple valid endpoints",
+			input:   []string{"http://host1:8187/attest", "https://host2:8187/attest"},
+			wantLen: 2,
+		},
+		{
+			name:    "empty strings are skipped",
+			input:   []string{"", "http://host1:8187/attest", ""},
+			wantLen: 1,
+		},
+		{
+			name:    "host without port",
+			input:   []string{"http://myhost/api/v1/attestation"},
+			wantLen: 1,
+		},
+		{
+			name:    "host without path",
+			input:   []string{"http://myhost"},
+			wantLen: 1,
+		},
+		{
+			name:    "invalid scheme ftp",
+			input:   []string{"ftp://host1:8187/attest"},
+			wantErr: "scheme must be http or https",
+		},
+		{
+			name:    "no scheme",
+			input:   []string{"host1:8187/attest"},
+			wantErr: "scheme must be http or https",
+		},
+		{
+			name:    "missing host",
+			input:   []string{"http:///path"},
+			wantErr: "missing host",
+		},
+		{
+			name:    "duplicate endpoints",
+			input:   []string{"http://host1:8187/attest", "http://host1:8187/attest"},
+			wantErr: "duplicate value",
+		},
+		{
+			name:    "error on first invalid stops parsing",
+			input:   []string{"http://valid:8187", "ftp://invalid:8187"},
+			wantErr: "scheme must be http or https",
+		},
+		{
+			name:    "comma-separated single string from env var",
+			input:   []string{"http://host1:8187/attest", "http://host2:8187/attest"},
+			wantLen: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseDependencyEndpoints(tt.input)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error %q does not contain %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != tt.wantLen {
+				t.Errorf("got %d URLs, want %d", len(got), tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestSplitCommaValues(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []string
+		want []string
+	}{
+		{
+			name: "nil input",
+			raw:  nil,
+			want: nil,
+		},
+		{
+			name: "empty input",
+			raw:  []string{},
+			want: nil,
+		},
+		{
+			name: "single value no comma",
+			raw:  []string{"abc"},
+			want: []string{"abc"},
+		},
+		{
+			name: "comma-separated in one element",
+			raw:  []string{"a,b,c"},
+			want: []string{"a", "b", "c"},
+		},
+		{
+			name: "comma-separated with spaces",
+			raw:  []string{"a , b , c"},
+			want: []string{"a", "b", "c"},
+		},
+		{
+			name: "trailing comma",
+			raw:  []string{"a,b,"},
+			want: []string{"a", "b"},
+		},
+		{
+			name: "leading comma",
+			raw:  []string{",a,b"},
+			want: []string{"a", "b"},
+		},
+		{
+			name: "multiple elements already split",
+			raw:  []string{"a", "b", "c"},
+			want: []string{"a", "b", "c"},
+		},
+		{
+			name: "mixed single and comma-separated",
+			raw:  []string{"a", "b,c", "d"},
+			want: []string{"a", "b", "c", "d"},
+		},
+		{
+			name: "empty strings filtered",
+			raw:  []string{"", "a", ""},
+			want: []string{"a"},
+		},
+		{
+			name: "only commas",
+			raw:  []string{",,,"},
+			want: nil,
+		},
+		{
+			name: "urls comma-separated",
+			raw:  []string{"http://host1:8187/attest,http://host2:8187/attest"},
+			want: []string{"http://host1:8187/attest", "http://host2:8187/attest"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitCommaValues(tt.raw)
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitCommaValues(%v) = %v (len %d), want %v (len %d)", tt.raw, got, len(got), tt.want, len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("splitCommaValues(%v)[%d] = %q, want %q", tt.raw, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 // contains reports whether s contains substr. Avoids importing strings just
 // for tests.
 func contains(s, substr string) bool {

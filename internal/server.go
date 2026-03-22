@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +26,7 @@ import (
 
 // Server wraps a Fiber application with its dependencies.
 type Server struct {
+	ctx          context.Context
 	app          *fiber.App
 	cfg          *Config
 	logger       *slog.Logger
@@ -34,6 +38,7 @@ type Server struct {
 	sevSNP       *sevsnp.Device
 	tdxDev       *tdx.Device
 	secureBoot   *bool
+	instanceID   string // random ID for dependency cycle detection via X-Attestation-Path
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -80,6 +85,8 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	if err := s.loadCertificates(); err != nil {
 		return nil, err
 	}
+
+	s.instanceID = s.deriveServiceIdentity()
 
 	// Skip UEFI secure boot detection in Nitro Enclaves: the enclave kernel
 	// has no EFI firmware so the sysfs variable does not exist, and boot
@@ -151,6 +158,14 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		logger.Info("opened tdx guest device")
 	}
 
+	if len(cfg.DependencyEndpoints) > 0 {
+		depStrs := make([]string, len(cfg.DependencyEndpoints))
+		for i, u := range cfg.DependencyEndpoints {
+			depStrs[i] = u.String()
+		}
+		logger.Info("configured dependency endpoints", "count", len(cfg.DependencyEndpoints), "urls", strings.Join(depStrs, ","), "instance_id", s.instanceID)
+	}
+
 	s.app = fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler:          s.errorHandler,
@@ -214,6 +229,8 @@ func loadEndorsements(path string) ([]*url.URL, error) {
 
 // Run starts the HTTP listener and blocks until ctx is cancelled or a fatal error occurs.
 func (s *Server) Run(ctx context.Context) error {
+	s.ctx = ctx
+
 	if s.cfg.PublicTLSCertPath != "" {
 		if err := s.watchCertDir(ctx, filepath.Dir(s.cfg.PublicTLSCertPath), "public", s.reloadPublicCert); err != nil {
 			return fmt.Errorf("public certificate watcher: %w", err)
@@ -327,4 +344,38 @@ func readSecureBootState() (*bool, error) {
 	}
 	enabled := data[4] != 0
 	return &enabled, nil
+}
+
+// deriveServiceIdentity computes a deterministic identity for this service
+// for dependency cycle detection. The identity is SHA-256 of the marshaled
+// build info concatenated with the leaf certificate's subject and SANs
+// (private cert preferred, public cert as fallback). SANs are included
+// because SPIFFE SVIDs typically have an empty subject and carry the
+// service identity in a URI SAN instead. Replicas of the same service
+// share the same build info and cert, so they produce the same identity —
+// which is the desired behavior since cycles are between services, not
+// processes.
+func (s *Server) deriveServiceIdentity() string {
+	h := sha256.New()
+
+	if s.buildInfo != nil {
+		biJSON, _ := json.Marshal(s.buildInfo)
+		h.Write(biJSON)
+	}
+
+	s.certs.mu.RLock()
+	cb := s.certs.private
+	if cb == nil {
+		cb = s.certs.public
+	}
+	s.certs.mu.RUnlock()
+
+	if cb != nil && len(cb.cert.Certificate) > 0 {
+		if leaf, err := x509.ParseCertificate(cb.cert.Certificate[0]); err == nil {
+			h.Write([]byte(leaf.Subject.String()))
+			h.Write([]byte(joinSANs(leaf.DNSNames, leaf.IPAddresses, leaf.URIs)))
+		}
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
 }

@@ -15,6 +15,7 @@ main.go                    # entry point
 cmd/root.go                # cobra root command; initializes config, logger, and starts server
 internal/attestation.go    # GET /api/v1/attestation handler and helpers (package app)
 internal/config.go         # Config struct and LoadConfig() (package app)
+internal/dependencies.go   # Transitive dependency attestation: parallel fetch, verify, cycle detection (package app)
 internal/logging.go        # NewLogger() (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS certificate loading and hot-reload (package app)
@@ -72,6 +73,9 @@ env = []
 [secure_boot]
 enforce = false
 
+[dependencies]
+endpoints = []
+
 [tls.public]
 cert_path = ""
 key_path  = ""
@@ -116,7 +120,10 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_TPM_ENABLED` | `tpm.enabled` | `false` | Enable generic TPM PCR reading via /dev/tpmrm0; auto-disabled if NitroNSM or NitroTPM evidence is enabled |
 | `ATTESTATION_SERVER_TPM_ALGORITHM` | `tpm.algorithm` | `sha384` | Hash algorithm for TPM PCR values: `sha1`/`sha256`/`sha384`/`sha512` (case-insensitive) |
 | `ATTESTATION_SERVER_SECURE_BOOT_ENFORCE` | `secure_boot.enforce` | `false` | Enforce UEFI Secure Boot; exit on startup if not enabled. UEFI secure boot detection is skipped when NitroNSM evidence is enabled (enclaves have no EFI firmware; boot integrity is proven by NSM PCR measurements) |
-| `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Environment variable names to include in report (unique) |
+| `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Comma-separated environment variable names to include in report (unique) |
+| `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints skip TLS verification (attestation proves certificate binding); HTTP endpoints must be proxied through a local mTLS-enabling proxy |
+
+List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS`) support comma-separated values: `VAR=a,b,c`. Spaces around commas are trimmed.
 
 ## Logging conventions
 
@@ -139,6 +146,24 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 - **Do not remove `reportToProto`** — it sanitises policy bits for parsing while preserving the original value for the API response.
 - **Do not remove `trustedRoots`** — these pre-parsed AMD root certs bypass the malformed certificate table entries.
 - These workarounds can be revisited when go-sev-guest ships a release including [PR #181](https://github.com/google/go-sev-guest/pull/181) and fixes certificate table handling.
+
+## Transitive dependency attestation
+
+When `dependencies.endpoints` is configured, the attestation handler fetches and verifies attestation reports from all dependency endpoints in parallel before collecting its own evidence. Each dependency receives the same nonce (`x-attestation-nonce` header) derived from the local `AttestationReportData` digest, and the same `X-Request-Id` for traceability.
+
+### Verification flow
+
+Each dependency response is parsed as an `AttestationReport`, verified (nonce binding + cryptographic evidence verification for all known TEE types including NitroTPM→SEV-SNP chaining), and embedded as `json.RawMessage` in the `dependencies` field. Raw bytes are stored instead of re-marshaled structs to avoid `goccy/go-json` zero-copy string issues.
+
+### Cycle detection
+
+Dependency cycles are detected via the `X-Attestation-Path` header, which carries a comma-separated list of service identities visited along the dependency chain. Each server appends its own identity before forwarding to dependencies. If a server finds its identity already in the path, it returns 409 Conflict, which propagates up the chain.
+
+The service identity is deterministic: `SHA-256(json(build_info) || cert_subject || cert_SANs)`, using the private cert (or public cert as fallback). This ensures replicas of the same service share the same identity (cycles are between services, not processes), while different services produce distinct identities. SANs are included because SPIFFE SVIDs may have empty subjects.
+
+### HTTP client hardening
+
+The dependency HTTP client is hardened against slowloris-like attacks with per-phase timeouts (dial: 5s, TLS handshake: 10s, response headers: 15s, overall: 30s), a 4 MiB response body limit, and disabled keep-alives.
 
 ## Testing
 
@@ -169,6 +194,7 @@ Fixture files:
 - `pkg/sevsnp/testdata/sevsnp_attestation_gcp.json`
 - `pkg/tdx/testdata/tdx_attestation.json`
 - `internal/testdata/nitrotpm_sevsnp_attestation.json` (chained NitroTPM → SEV-SNP)
+- `internal/testdata/dependencies_attestation.json` (diamond dependency graph: A → {B, C}, B → C with NitroTPM+SEV-SNP, TDX, and SEV-SNP evidence across services)
 
 ## Development
 

@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -13,20 +14,21 @@ import (
 
 // Config holds the resolved server configuration.
 type Config struct {
-	BindHost           string
-	BindPort           int
-	LogFormat          string
-	LogLevel           slog.Level
-	BuildInfoPath      string
-	EndorsementsPath   string
-	PublicTLSCertPath  string
-	PublicTLSKeyPath   string
-	PrivateTLSCertPath string
-	PrivateTLSKeyPath  string
-	ReportEvidence     EvidenceConfig
-	ReportEnvVars      []string
-	SecureBootEnforce  bool
-	TPM                TPMConfig
+	BindHost            string
+	BindPort            int
+	LogFormat           string
+	LogLevel            slog.Level
+	BuildInfoPath       string
+	EndorsementsPath    string
+	PublicTLSCertPath   string
+	PublicTLSKeyPath    string
+	PrivateTLSCertPath  string
+	PrivateTLSKeyPath   string
+	ReportEvidence      EvidenceConfig
+	ReportEnvVars       []string
+	SecureBootEnforce   bool
+	TPM                 TPMConfig
+	DependencyEndpoints []*url.URL
 }
 
 // TPMConfig holds the configuration for generic TPM PCR reading.
@@ -68,26 +70,32 @@ func LoadConfig() (*Config, error) {
 		AlgorithmName: tpmAlgName,
 	}
 
-	envVars := viper.GetStringSlice("report.user_data.env")
+	envVars := splitCommaValues(viper.GetStringSlice("report.user_data.env"))
 	if err := validateEnvNames(envVars); err != nil {
 		return nil, err
 	}
 
+	depEndpoints, err := parseDependencyEndpoints(splitCommaValues(viper.GetStringSlice("dependencies.endpoints")))
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
-		BindHost:           viper.GetString("server.host"),
-		BindPort:           viper.GetInt("server.port"),
-		LogFormat:          viper.GetString("log.format"),
-		LogLevel:           parseLogLevel(viper.GetString("log.level")),
-		BuildInfoPath:      viper.GetString("paths.build_info"),
-		EndorsementsPath:   viper.GetString("paths.endorsements"),
-		PublicTLSCertPath:  absPath(viper.GetString("tls.public.cert_path")),
-		PublicTLSKeyPath:   absPath(viper.GetString("tls.public.key_path")),
-		PrivateTLSCertPath: absPath(viper.GetString("tls.private.cert_path")),
-		PrivateTLSKeyPath:  absPath(viper.GetString("tls.private.key_path")),
-		ReportEvidence:     evidence,
-		ReportEnvVars:      envVars,
-		SecureBootEnforce:  viper.GetBool("secure_boot.enforce"),
-		TPM:                tpmCfg,
+		BindHost:            viper.GetString("server.host"),
+		BindPort:            viper.GetInt("server.port"),
+		LogFormat:           viper.GetString("log.format"),
+		LogLevel:            parseLogLevel(viper.GetString("log.level")),
+		BuildInfoPath:       viper.GetString("paths.build_info"),
+		EndorsementsPath:    viper.GetString("paths.endorsements"),
+		PublicTLSCertPath:   absPath(viper.GetString("tls.public.cert_path")),
+		PublicTLSKeyPath:    absPath(viper.GetString("tls.public.key_path")),
+		PrivateTLSCertPath:  absPath(viper.GetString("tls.private.cert_path")),
+		PrivateTLSKeyPath:   absPath(viper.GetString("tls.private.key_path")),
+		ReportEvidence:      evidence,
+		ReportEnvVars:       envVars,
+		SecureBootEnforce:   viper.GetBool("secure_boot.enforce"),
+		TPM:                 tpmCfg,
+		DependencyEndpoints: depEndpoints,
 	}, nil
 }
 
@@ -131,6 +139,24 @@ func findDuplicate(vals []string) string {
 	return ""
 }
 
+// splitCommaValues expands a string slice so that comma-separated values
+// within a single element are split into separate entries. This allows
+// env vars (which viper delivers as a single string) to specify multiple
+// values: VAR=a,b,c. TOML arrays already produce individual elements so
+// the split is a no-op there.
+func splitCommaValues(raw []string) []string {
+	var out []string
+	for _, s := range raw {
+		for _, part := range strings.Split(s, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
 func absPath(p string) string {
 	if p == "" {
 		return ""
@@ -140,6 +166,32 @@ func absPath(p string) string {
 		return p
 	}
 	return abs
+}
+
+func parseDependencyEndpoints(raw []string) ([]*url.URL, error) {
+	seen := make(map[string]bool, len(raw))
+	urls := make([]*url.URL, 0, len(raw))
+	for i, s := range raw {
+		if s == "" {
+			continue
+		}
+		u, err := url.Parse(s)
+		if err != nil {
+			return nil, fmt.Errorf("dependencies.endpoints[%d]: invalid URL %q: %w", i, s, err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return nil, fmt.Errorf("dependencies.endpoints[%d]: scheme must be http or https, got %q", i, u.Scheme)
+		}
+		if u.Host == "" {
+			return nil, fmt.Errorf("dependencies.endpoints[%d]: missing host in %q", i, s)
+		}
+		if seen[s] {
+			return nil, fmt.Errorf("dependencies.endpoints contains duplicate value %q", s)
+		}
+		seen[s] = true
+		urls = append(urls, u)
+	}
+	return urls, nil
 }
 
 func parseTPMAlgorithm(s string) (tpm2.TPMAlgID, error) {

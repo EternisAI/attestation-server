@@ -57,8 +57,9 @@ type BuildInfo struct {
 // bytes used for the nonce digest appear byte-for-byte identical in the
 // response.
 type AttestationReport struct {
-	Evidence []*AttestationEvidence `json:"evidence"`
-	Data     json.RawMessage        `json:"data"`
+	Evidence     []*AttestationEvidence `json:"evidence"`
+	Data         json.RawMessage        `json:"data"`
+	Dependencies []json.RawMessage      `json:"dependencies,omitempty"`
 }
 
 // AttestationEvidence holds one piece of hardware attestation evidence.

@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -17,6 +18,11 @@ import (
 	"github.com/eternisai/attestation-server/pkg/tpm"
 )
 
+const (
+	nonceHeader = "x-attestation-nonce"
+	pathHeader  = "x-attestation-path"
+)
+
 // handleAttestation serves GET /api/v1/attestation. It collects server
 // metadata into AttestationReportData, hashes it with SHA-512, then uses
 // that digest as the nonce for the configured TEE attestation mechanism(s).
@@ -25,12 +31,24 @@ import (
 func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	requestID, _ := c.Locals("requestid").(string)
 
+	// Detect dependency cycles via X-Attestation-Path. The header carries
+	// a comma-separated list of instance IDs visited along the dependency
+	// chain. If our own ID appears, a cycle exists.
+	attestationPath := c.Get(pathHeader)
+	if attestationPath != "" {
+		for _, id := range strings.Split(attestationPath, ",") {
+			if strings.TrimSpace(id) == s.instanceID {
+				return fiber.NewError(fiber.StatusConflict, "dependency cycle detected")
+			}
+		}
+	}
+
 	// Resolve nonce: query param > header; left empty if not provided.
 	// The nonce is a hex-encoded byte slice of up to 64 bytes (128 hex digits).
 	var nonce string
 	if n := c.Query("nonce"); n != "" {
 		nonce = n
-	} else if n := c.Get("x-attestation-nonce"); n != "" {
+	} else if n := c.Get(nonceHeader); n != "" {
 		nonce = n
 	}
 	if nonce != "" {
@@ -118,6 +136,16 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 
 	digest := sha512.Sum512(reportDataJSON)
 
+	// Fetch and verify dependency attestation reports in parallel.
+	nonceHex := hex.EncodeToString(digest[:])
+	deps, err := s.fetchDependencies(nonceHex, requestID, attestationPath)
+	if err != nil {
+		if errors.Is(err, errDependencyCycle) {
+			return fiber.NewError(fiber.StatusConflict, "dependency cycle detected")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+
 	// Collect attestation evidence.
 	// NitroNSM and TDX are exclusive and return immediately.
 	if s.cfg.ReportEvidence.NitroNSM {
@@ -135,6 +163,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 			Evidence: []*AttestationEvidence{
 				{Kind: "nitronsm", Blob: blob, Data: nitro.NewAttestationData(doc)},
 			},
+			Dependencies: deps,
 		}
 		return sendReport(c, report, reportDataJSON)
 	}
@@ -150,6 +179,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 			Evidence: []*AttestationEvidence{
 				{Kind: "tdx", Blob: blob, Data: tdx.NewAttestationData(quote)},
 			},
+			Dependencies: deps,
 		}
 		return sendReport(c, report, reportDataJSON)
 	}
@@ -197,7 +227,8 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	}
 
 	report := &AttestationReport{
-		Evidence: evidence,
+		Evidence:     evidence,
+		Dependencies: deps,
 	}
 	return sendReport(c, report, reportDataJSON)
 }

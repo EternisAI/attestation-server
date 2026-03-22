@@ -62,6 +62,7 @@ func initConfig() {
 	viper.SetDefault("secure_boot.enforce", false)
 	viper.SetDefault("tpm.enabled", false)
 	viper.SetDefault("tpm.algorithm", "sha384")
+	viper.SetDefault("dependencies.endpoints", []string{})
 
 	// Explicit environment variable bindings (avoids AutomaticEnv underscore ambiguity)
 	_ = viper.BindEnv("log.format", "ATTESTATION_SERVER_LOG_FORMAT")
@@ -83,6 +84,7 @@ func initConfig() {
 	_ = viper.BindEnv("secure_boot.enforce", "ATTESTATION_SERVER_SECURE_BOOT_ENFORCE")
 	_ = viper.BindEnv("tpm.enabled", "ATTESTATION_SERVER_TPM_ENABLED")
 	_ = viper.BindEnv("tpm.algorithm", "ATTESTATION_SERVER_TPM_ALGORITHM")
+	_ = viper.BindEnv("dependencies.endpoints", "ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS")
 
 	// Config file resolution: flag > env var > fallback paths
 	explicit := true

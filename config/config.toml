@@ -29,6 +29,13 @@ env = []  # optional; environment variable names to include
 [secure_boot]
 enforce = false
 
+[dependencies]
+# URLs of dependency attestation servers whose reports are fetched,
+# verified, and included in this server's response. HTTPS endpoints
+# skip TLS verification (attestation proves certificate binding);
+# HTTP endpoints must be proxied through a local mTLS-enabling proxy.
+endpoints = []
+
 [tls.public]
 cert_path = ""
 key_path  = ""

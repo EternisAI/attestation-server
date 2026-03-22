@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/eternisai/attestation-server/pkg/nitro"
 	"github.com/eternisai/attestation-server/pkg/sevsnp"
+	"github.com/eternisai/attestation-server/pkg/tdx"
 	"github.com/google/go-sev-guest/abi"
 )
 
@@ -370,6 +372,357 @@ func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 		_, err = sevsnp.VerifyAttestation(rawReport, certTable, digest, nil, now)
 		if err == nil {
 			t.Fatal("sevsnp.VerifyAttestation() should fail when using unchained digest")
+		}
+	})
+}
+
+// dependencyFixture mirrors the JSON format of the dependency attestation fixture.
+// It extends chainedFixture with a Dependencies field containing nested reports.
+type dependencyFixture struct {
+	Time   string `json:"time"`
+	Report struct {
+		Evidence []struct {
+			Kind    string          `json:"kind"`
+			Blob    string          `json:"blob"`
+			RawData json.RawMessage `json:"data"`
+		} `json:"evidence"`
+		Data         json.RawMessage   `json:"data"`
+		Dependencies []json.RawMessage `json:"dependencies"`
+	} `json:"report"`
+}
+
+// dependencyReport is used to parse each dependency's JSON.
+type dependencyReport struct {
+	Evidence []struct {
+		Kind    string          `json:"kind"`
+		Blob    string          `json:"blob"`
+		RawData json.RawMessage `json:"data"`
+	} `json:"evidence"`
+	Data         json.RawMessage   `json:"data"`
+	Dependencies []json.RawMessage `json:"dependencies"`
+}
+
+// TestDependencyAttestation_DiamondGraph verifies the full transitive
+// dependency attestation fixture with a diamond dependency pattern:
+//
+//	A (NitroTPM+SEV-SNP) → {B (TDX), C (SEV-SNP)}
+//	B → C (SEV-SNP)
+//
+// Service C appears twice: once as a direct dependency of A and once as
+// a transitive dependency through B, forming a diamond. Both instances
+// share the same TLS certificate and build info (same service, possibly
+// different replicas).
+//
+// The test verifies:
+//  1. Top-level NitroTPM+SEV-SNP chained evidence
+//  2. Dependency nonce binding (each dep's nonce == hex digest of A's report data)
+//  3. Transitive C's nonce binding (nonce == hex digest of B's report data)
+//  4. Cryptographic verification of all evidence entries at every level
+//  5. verifyDependencyReport succeeds for each dependency
+//  6. Nonce mismatch is correctly rejected
+func TestDependencyAttestation_DiamondGraph(t *testing.T) {
+	path := filepath.Join("testdata", "dependencies_attestation.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading fixture: %v", err)
+	}
+	var f dependencyFixture
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatalf("parsing fixture: %v", err)
+	}
+
+	now, err := time.Parse(time.RFC3339Nano, f.Time)
+	if err != nil {
+		t.Fatalf("parsing time: %v", err)
+	}
+
+	// Compute top-level digest from report data.
+	var dataBuf bytes.Buffer
+	if err := json.Compact(&dataBuf, f.Report.Data); err != nil {
+		t.Fatalf("compacting data JSON: %v", err)
+	}
+	digest := sha512.Sum512(dataBuf.Bytes())
+	nonceHex := hex.EncodeToString(digest[:])
+
+	// --- Step 1: Verify top-level NitroTPM + SEV-SNP chained evidence ---
+
+	t.Run("top-level NitroTPM verification", func(t *testing.T) {
+		var tpmEntry *struct {
+			Kind    string          `json:"kind"`
+			Blob    string          `json:"blob"`
+			RawData json.RawMessage `json:"data"`
+		}
+		for i := range f.Report.Evidence {
+			if f.Report.Evidence[i].Kind == "nitrotpm" {
+				tpmEntry = &f.Report.Evidence[i]
+				break
+			}
+		}
+		if tpmEntry == nil {
+			t.Fatal("fixture missing nitrotpm evidence")
+		}
+
+		blob, err := base64.StdEncoding.DecodeString(tpmEntry.Blob)
+		if err != nil {
+			t.Fatalf("decoding nitrotpm blob: %v", err)
+		}
+		doc, err := nitro.VerifyAttestation(blob, digest[:], now)
+		if err != nil {
+			t.Fatalf("nitro.VerifyAttestation() error: %v", err)
+		}
+
+		got := nitro.NewAttestationData(doc)
+		gotJSON, _ := json.Marshal(got)
+		if len(tpmEntry.RawData) > 0 {
+			var fixtureCompact, gotCompact bytes.Buffer
+			json.Compact(&fixtureCompact, tpmEntry.RawData)
+			json.Compact(&gotCompact, gotJSON)
+			if fixtureCompact.String() != gotCompact.String() {
+				t.Errorf("NitroTPM NewAttestationData JSON mismatch")
+			}
+		}
+	})
+
+	t.Run("top-level SEV-SNP chained verification", func(t *testing.T) {
+		var tpmEntry, snpEntry *struct {
+			Kind    string          `json:"kind"`
+			Blob    string          `json:"blob"`
+			RawData json.RawMessage `json:"data"`
+		}
+		for i := range f.Report.Evidence {
+			switch f.Report.Evidence[i].Kind {
+			case "nitrotpm":
+				tpmEntry = &f.Report.Evidence[i]
+			case "sevsnp":
+				snpEntry = &f.Report.Evidence[i]
+			}
+		}
+		if tpmEntry == nil || snpEntry == nil {
+			t.Fatal("fixture missing nitrotpm or sevsnp evidence")
+		}
+
+		nitroTPMBlob, _ := base64.StdEncoding.DecodeString(tpmEntry.Blob)
+		snpBlob, _ := base64.StdEncoding.DecodeString(snpEntry.Blob)
+
+		snpReportData := sha512.Sum512(nitroTPMBlob)
+		if len(snpBlob) < abi.ReportSize {
+			t.Fatalf("sevsnp blob too short: %d < %d", len(snpBlob), abi.ReportSize)
+		}
+		report, err := sevsnp.VerifyAttestation(snpBlob[:abi.ReportSize], snpBlob[abi.ReportSize:], snpReportData, nil, now)
+		if err != nil {
+			t.Fatalf("sevsnp.VerifyAttestation() error: %v", err)
+		}
+
+		got := sevsnp.NewAttestationData(report)
+		gotJSON, _ := json.Marshal(got)
+		if len(snpEntry.RawData) > 0 {
+			var fixtureCompact, gotCompact bytes.Buffer
+			json.Compact(&fixtureCompact, snpEntry.RawData)
+			json.Compact(&gotCompact, gotJSON)
+			if fixtureCompact.String() != gotCompact.String() {
+				t.Errorf("SEV-SNP NewAttestationData JSON mismatch")
+			}
+		}
+	})
+
+	// --- Step 2: Verify each dependency's nonce binding and evidence ---
+
+	if len(f.Report.Dependencies) != 2 {
+		t.Fatalf("expected 2 dependencies, got %d", len(f.Report.Dependencies))
+	}
+
+	// Parse both dependencies.
+	var deps [2]dependencyReport
+	for i := 0; i < 2; i++ {
+		if err := json.Unmarshal(f.Report.Dependencies[i], &deps[i]); err != nil {
+			t.Fatalf("parsing dependency[%d]: %v", i, err)
+		}
+	}
+
+	t.Run("dependency[0] TDX nonce and verification", func(t *testing.T) {
+		dep := deps[0]
+		if len(dep.Evidence) != 1 || dep.Evidence[0].Kind != "tdx" {
+			t.Fatalf("expected single tdx evidence, got %v", dep.Evidence)
+		}
+
+		// Nonce in dependency's data must match top-level digest.
+		var depData AttestationReportData
+		if err := json.Unmarshal(dep.Data, &depData); err != nil {
+			t.Fatalf("parsing dep data: %v", err)
+		}
+		if depData.Nonce != nonceHex {
+			t.Errorf("dep[0] nonce = %q, want %q", depData.Nonce, nonceHex)
+		}
+
+		// Verify TDX evidence.
+		var depDataBuf bytes.Buffer
+		json.Compact(&depDataBuf, dep.Data)
+		depDigest := sha512.Sum512(depDataBuf.Bytes())
+
+		blob, _ := base64.StdEncoding.DecodeString(dep.Evidence[0].Blob)
+		quote, err := tdx.VerifyQuote(blob, depDigest, now)
+		if err != nil {
+			t.Fatalf("tdx.VerifyQuote() error: %v", err)
+		}
+
+		got := tdx.NewAttestationData(quote)
+		gotJSON, _ := json.Marshal(got)
+		if len(dep.Evidence[0].RawData) > 0 {
+			var fixtureCompact, gotCompact bytes.Buffer
+			json.Compact(&fixtureCompact, dep.Evidence[0].RawData)
+			json.Compact(&gotCompact, gotJSON)
+			if fixtureCompact.String() != gotCompact.String() {
+				t.Errorf("TDX NewAttestationData JSON mismatch")
+			}
+		}
+	})
+
+	t.Run("dependency[0] verifyDependencyReport", func(t *testing.T) {
+		var report AttestationReport
+		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
+			t.Fatalf("parsing dependency: %v", err)
+		}
+		if err := verifyDependencyReport(&report, nonceHex, now); err != nil {
+			t.Fatalf("verifyDependencyReport() error: %v", err)
+		}
+	})
+
+	t.Run("dependency[1] SEV-SNP nonce and verification", func(t *testing.T) {
+		dep := deps[1]
+		if len(dep.Evidence) != 1 || dep.Evidence[0].Kind != "sevsnp" {
+			t.Fatalf("expected single sevsnp evidence, got %v", dep.Evidence)
+		}
+
+		var depData AttestationReportData
+		if err := json.Unmarshal(dep.Data, &depData); err != nil {
+			t.Fatalf("parsing dep data: %v", err)
+		}
+		if depData.Nonce != nonceHex {
+			t.Errorf("dep[1] nonce = %q, want %q", depData.Nonce, nonceHex)
+		}
+
+		// Verify SEV-SNP evidence (no chaining — standalone).
+		var depDataBuf bytes.Buffer
+		json.Compact(&depDataBuf, dep.Data)
+		depDigest := sha512.Sum512(depDataBuf.Bytes())
+
+		blob, _ := base64.StdEncoding.DecodeString(dep.Evidence[0].Blob)
+		if len(blob) < abi.ReportSize {
+			t.Fatalf("sevsnp blob too short")
+		}
+		report, err := sevsnp.VerifyAttestation(blob[:abi.ReportSize], blob[abi.ReportSize:], depDigest, nil, now)
+		if err != nil {
+			t.Fatalf("sevsnp.VerifyAttestation() error: %v", err)
+		}
+
+		got := sevsnp.NewAttestationData(report)
+		gotJSON, _ := json.Marshal(got)
+		if len(dep.Evidence[0].RawData) > 0 {
+			var fixtureCompact, gotCompact bytes.Buffer
+			json.Compact(&fixtureCompact, dep.Evidence[0].RawData)
+			json.Compact(&gotCompact, gotJSON)
+			if fixtureCompact.String() != gotCompact.String() {
+				t.Errorf("SEV-SNP NewAttestationData JSON mismatch")
+			}
+		}
+	})
+
+	t.Run("dependency[1] verifyDependencyReport", func(t *testing.T) {
+		var report AttestationReport
+		if err := json.Unmarshal(f.Report.Dependencies[1], &report); err != nil {
+			t.Fatalf("parsing dependency: %v", err)
+		}
+		if err := verifyDependencyReport(&report, nonceHex, now); err != nil {
+			t.Fatalf("verifyDependencyReport() error: %v", err)
+		}
+	})
+
+	// --- Step 3: Verify transitive C (nested inside B) ---
+
+	t.Run("transitive C via B nonce and verification", func(t *testing.T) {
+		if len(deps[0].Dependencies) != 1 {
+			t.Fatalf("expected 1 nested dependency in dep[0], got %d", len(deps[0].Dependencies))
+		}
+
+		// Transitive C's nonce should be the hex digest of B's (dep[0]) report data.
+		var bDataBuf bytes.Buffer
+		json.Compact(&bDataBuf, deps[0].Data)
+		bDigest := sha512.Sum512(bDataBuf.Bytes())
+		bNonceHex := hex.EncodeToString(bDigest[:])
+
+		var subDep dependencyReport
+		if err := json.Unmarshal(deps[0].Dependencies[0], &subDep); err != nil {
+			t.Fatalf("parsing nested dependency: %v", err)
+		}
+
+		var subData AttestationReportData
+		if err := json.Unmarshal(subDep.Data, &subData); err != nil {
+			t.Fatalf("parsing nested dep data: %v", err)
+		}
+		if subData.Nonce != bNonceHex {
+			t.Errorf("nested dep nonce = %q, want %q", subData.Nonce, bNonceHex)
+		}
+
+		// Verify transitive C's SEV-SNP evidence.
+		if len(subDep.Evidence) != 1 || subDep.Evidence[0].Kind != "sevsnp" {
+			t.Fatalf("expected single sevsnp evidence in nested dep")
+		}
+
+		var subDataBuf bytes.Buffer
+		json.Compact(&subDataBuf, subDep.Data)
+		subDigest := sha512.Sum512(subDataBuf.Bytes())
+
+		blob, _ := base64.StdEncoding.DecodeString(subDep.Evidence[0].Blob)
+		if len(blob) < abi.ReportSize {
+			t.Fatalf("sevsnp blob too short")
+		}
+		_, err := sevsnp.VerifyAttestation(blob[:abi.ReportSize], blob[abi.ReportSize:], subDigest, nil, now)
+		if err != nil {
+			t.Fatalf("sevsnp.VerifyAttestation() error: %v", err)
+		}
+	})
+
+	t.Run("transitive C via B verifyDependencyReport", func(t *testing.T) {
+		var bDataBuf bytes.Buffer
+		json.Compact(&bDataBuf, deps[0].Data)
+		bDigest := sha512.Sum512(bDataBuf.Bytes())
+		bNonceHex := hex.EncodeToString(bDigest[:])
+
+		var report AttestationReport
+		if err := json.Unmarshal(deps[0].Dependencies[0], &report); err != nil {
+			t.Fatalf("parsing nested dependency: %v", err)
+		}
+		if err := verifyDependencyReport(&report, bNonceHex, now); err != nil {
+			t.Fatalf("verifyDependencyReport() error: %v", err)
+		}
+	})
+
+	// --- Step 4: Verify nonce mismatch is rejected ---
+
+	t.Run("dependency fails with wrong nonce", func(t *testing.T) {
+		var report AttestationReport
+		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
+			t.Fatalf("parsing dependency: %v", err)
+		}
+		err := verifyDependencyReport(&report, "0000000000000000", now)
+		if err == nil {
+			t.Fatal("verifyDependencyReport() should fail with wrong nonce")
+		}
+		if !bytes.Contains([]byte(err.Error()), []byte("nonce mismatch")) {
+			t.Errorf("error %q does not contain 'nonce mismatch'", err.Error())
+		}
+	})
+
+	t.Run("transitive C fails with A nonce instead of B nonce", func(t *testing.T) {
+		// Using A's nonce for the transitive C (reached via B) should fail —
+		// it must use B's digest, not A's.
+		var report AttestationReport
+		if err := json.Unmarshal(deps[0].Dependencies[0], &report); err != nil {
+			t.Fatalf("parsing transitive dependency: %v", err)
+		}
+		err := verifyDependencyReport(&report, nonceHex, now)
+		if err == nil {
+			t.Fatal("verifyDependencyReport() should fail when using A's nonce for transitive C")
 		}
 	})
 }
