@@ -93,7 +93,7 @@ func (t *Device) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
 		return nil, nil, fmt.Errorf("tdx quote request failed: %w", err)
 	}
 
-	quote, err := VerifyQuote(rawQuote, reportData)
+	quote, err := VerifyQuote(rawQuote, reportData, time.Now())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,7 +105,7 @@ func (t *Device) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
 // PCK certificate chain against the Intel SGX Root CA (offline, no collateral
 // fetching or CRL check), and validates that the report data field matches the
 // expected value.
-func VerifyQuote(rawQuote []byte, expectedReportData [64]byte) (*pb.QuoteV4, error) {
+func VerifyQuote(rawQuote []byte, expectedReportData [64]byte, now time.Time) (*pb.QuoteV4, error) {
 	parsed, err := abi.QuoteToProto(rawQuote)
 	if err != nil {
 		return nil, fmt.Errorf("parsing tdx quote: %w", err)
@@ -116,11 +116,14 @@ func VerifyQuote(rawQuote []byte, expectedReportData [64]byte) (*pb.QuoteV4, err
 		return nil, fmt.Errorf("unexpected tdx quote type: %T", parsed)
 	}
 
+	if now.IsZero() {
+		now = time.Now()
+	}
 	opts := &verify.Options{
 		CheckRevocations: false,
 		GetCollateral:    false,
 		TrustedRoots:     intelSGXRootPool,
-		Now:              time.Now(),
+		Now:              now,
 	}
 	if err := verify.TdxQuote(quote, opts); err != nil {
 		return nil, fmt.Errorf("tdx quote verification failed: %w", err)

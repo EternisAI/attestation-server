@@ -140,6 +140,32 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 - **Do not remove `trustedRoots`** — these pre-parsed AMD root certs bypass the malformed certificate table entries.
 - These workarounds can be revisited when go-sev-guest ships a release including [PR #181](https://github.com/google/go-sev-guest/pull/181) and fixes certificate table handling.
 
+## Testing
+
+Tests use the standard `testing` package (no testify), table-driven subtests with `t.Run`, and no mocking of hardware interfaces.
+
+### Attestation verification fixtures
+
+Each TEE package has a `testdata/` directory with JSON fixtures captured from real hardware. All fixtures use the same format — the attestation handler's full response wrapped with a timestamp from within the certificate validity window:
+
+```json
+{
+  "time": "RFC 3339 timestamp",
+  "report": {
+    "evidence": [{"kind": "...", "blob": "base64...", "data": {...}}],
+    "data": { ... AttestationReportData ... }
+  }
+}
+```
+
+The nonce/report_data is derived as `SHA-512(compact(report.data))`. Each verification test also cross-checks that `NewAttestationData` produces JSON matching the fixture's `evidence[0].data`.
+
+Fixture files:
+- `pkg/nitro/testdata/nitronsm_attestation.json`
+- `pkg/nitro/testdata/nitrotpm_attestation.json`
+- `pkg/sevsnp/testdata/sevsnp_attestation.json`
+- `pkg/tdx/testdata/tdx_attestation.json`
+
 ## Development
 
 ```sh

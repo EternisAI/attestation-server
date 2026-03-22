@@ -61,7 +61,7 @@ func (s *Device) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, err
 		return nil, nil, fmt.Errorf("sev-snp attestation request failed: %w", err)
 	}
 
-	report, err := VerifyAttestation(rawReport, certTable, reportData, s.dev.Product())
+	report, err := VerifyAttestation(rawReport, certTable, reportData, s.dev.Product(), time.Now())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,7 +105,11 @@ func (s *Device) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, err
 //     bytes differ from what the hardware actually signed, causing ECDSA
 //     verification to fail. We verify the signature directly against the
 //     original raw report bytes instead.
-func VerifyAttestation(rawReport, certTable []byte, expectedReportData [64]byte, product *spb.SevProduct) (*spb.Report, error) {
+func VerifyAttestation(rawReport, certTable []byte, expectedReportData [64]byte, product *spb.SevProduct, now time.Time) (*spb.Report, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+
 	report, origPolicy, err := reportToProto(rawReport)
 	if err != nil {
 		return nil, fmt.Errorf("parsing sev-snp report: %w", err)
@@ -155,7 +159,6 @@ func VerifyAttestation(rawReport, certTable []byte, expectedReportData [64]byte,
 	// Verify the endorsement key's certificate chain against AMD's
 	// embedded root certificates, trying both VCEK and VLEK roots for the
 	// product line until one succeeds.
-	now := time.Now()
 	roots, ok := trustedRoots[productLine]
 	if !ok {
 		return nil, fmt.Errorf("sev-snp: no trusted roots for product line %q", productLine)

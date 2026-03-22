@@ -112,7 +112,7 @@ func toHexBytesMap(m map[int][]byte) map[int]HexBytes {
 // the well-known AWS Nitro root CA, checks that the nonce matches, and returns
 // the full deserialized document. Works for both NSM and NitroTPM
 // attestation documents.
-func VerifyAttestation(blob, expectedNonce []byte) (*AttestationDocument, error) {
+func VerifyAttestation(blob, expectedNonce []byte, now time.Time) (*AttestationDocument, error) {
 	// --- 1. Parse COSE_Sign1 envelope ---
 	// COSE_Sign1 = [protected, unprotected, payload, signature]
 	// fxamacker/cbor strips the CBOR tag 18 transparently.
@@ -172,6 +172,7 @@ func VerifyAttestation(blob, expectedNonce []byte) (*AttestationDocument, error)
 	if _, err := leafCert.Verify(x509.VerifyOptions{
 		Roots:         roots,
 		Intermediates: intermediates,
+		CurrentTime:   now,
 	}); err != nil {
 		return nil, fmt.Errorf("certificate chain verification failed: %w", err)
 	}

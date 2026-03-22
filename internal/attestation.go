@@ -126,7 +126,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
 		}
-		doc, err := nitro.VerifyAttestation(blob, digest[:])
+		doc, err := nitro.VerifyAttestation(blob, digest[:], time.Now())
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
 		}
@@ -164,7 +164,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
 		}
-		doc, err := nitro.VerifyAttestation(blob, digest[:])
+		doc, err := nitro.VerifyAttestation(blob, digest[:], time.Now())
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
 		}
