@@ -160,12 +160,15 @@ Each TEE package has a `testdata/` directory with JSON fixtures captured from re
 
 The nonce/report_data is derived as `SHA-512(compact(report.data))`. Each verification test also cross-checks that `NewAttestationData` produces JSON matching the fixture's `evidence[0].data`.
 
+Chained (composite) attestation fixtures contain multiple evidence entries. For NitroTPM+SEV-SNP, the SEV-SNP report_data is `SHA-512(nitroTPMBlob)` instead of the raw digest, binding both proofs to the same request. The chained test in `internal/attestation_test.go` verifies both links and confirms the chain breaks if the unchained digest is used.
+
 Fixture files:
 - `pkg/nitro/testdata/nitronsm_attestation.json`
 - `pkg/nitro/testdata/nitrotpm_attestation.json`
 - `pkg/sevsnp/testdata/sevsnp_attestation_aws.json`
 - `pkg/sevsnp/testdata/sevsnp_attestation_gcp.json`
 - `pkg/tdx/testdata/tdx_attestation.json`
+- `internal/testdata/nitrotpm_sevsnp_attestation.json` (chained NitroTPM → SEV-SNP)
 
 ## Development
 
