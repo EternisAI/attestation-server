@@ -223,13 +223,10 @@ type nitroFixture struct {
 	} `json:"report"`
 }
 
-func loadNitroFixture(t *testing.T, name string) (*nitroFixture, bool) {
+func loadNitroFixture(t *testing.T, name string) *nitroFixture {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, false
-	}
 	if err != nil {
 		t.Fatalf("reading fixture %s: %v", path, err)
 	}
@@ -237,7 +234,7 @@ func loadNitroFixture(t *testing.T, name string) (*nitroFixture, bool) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("parsing fixture %s: %v", path, err)
 	}
-	return &f, true
+	return &f
 }
 
 // deriveNonce compacts the fixture's raw data JSON (stripping whitespace
@@ -265,10 +262,7 @@ func TestVerifyAttestation(t *testing.T) {
 
 	for _, fx := range fixtures {
 		t.Run(fx.name, func(t *testing.T) {
-			f, ok := loadNitroFixture(t, fx.filename)
-			if !ok {
-				t.Skipf("fixture %s not found, skipping", fx.filename)
-			}
+			f := loadNitroFixture(t, fx.filename)
 
 			if len(f.Report.Evidence) == 0 {
 				t.Fatal("fixture has no evidence entries")

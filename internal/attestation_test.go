@@ -237,9 +237,6 @@ type chainedFixture struct {
 func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 	path := filepath.Join("testdata", "nitrotpm_sevsnp_attestation.json")
 	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		t.Skip("fixture testdata/nitrotpm_sevsnp_attestation.json not found, skipping")
-	}
 	if err != nil {
 		t.Fatalf("reading fixture: %v", err)
 	}

@@ -205,13 +205,10 @@ type sevsnpFixture struct {
 	} `json:"report"`
 }
 
-func loadSEVSNPFixture(t *testing.T, name string) (*sevsnpFixture, bool) {
+func loadSEVSNPFixture(t *testing.T, name string) *sevsnpFixture {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, false
-	}
 	if err != nil {
 		t.Fatalf("reading fixture %s: %v", path, err)
 	}
@@ -219,7 +216,7 @@ func loadSEVSNPFixture(t *testing.T, name string) (*sevsnpFixture, bool) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("parsing fixture %s: %v", path, err)
 	}
-	return &f, true
+	return &f
 }
 
 // deriveReportData compacts the fixture's raw data JSON (stripping whitespace
@@ -246,10 +243,7 @@ func TestVerifyAttestation(t *testing.T) {
 
 	for _, fx := range fixtures {
 		t.Run(fx.name, func(t *testing.T) {
-			f, ok := loadSEVSNPFixture(t, fx.filename)
-			if !ok {
-				t.Skipf("fixture %s not found, skipping", fx.filename)
-			}
+			f := loadSEVSNPFixture(t, fx.filename)
 
 			if len(f.Report.Evidence) == 0 {
 				t.Fatal("fixture has no evidence entries")

@@ -248,13 +248,10 @@ type tdxFixture struct {
 	} `json:"report"`
 }
 
-func loadTDXFixture(t *testing.T, name string) (*tdxFixture, bool) {
+func loadTDXFixture(t *testing.T, name string) *tdxFixture {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, false
-	}
 	if err != nil {
 		t.Fatalf("reading fixture %s: %v", path, err)
 	}
@@ -262,7 +259,7 @@ func loadTDXFixture(t *testing.T, name string) (*tdxFixture, bool) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("parsing fixture %s: %v", path, err)
 	}
-	return &f, true
+	return &f
 }
 
 // deriveReportData compacts the fixture's raw data JSON (stripping whitespace
@@ -279,10 +276,7 @@ func deriveReportData(t *testing.T, rawData json.RawMessage) [64]byte {
 }
 
 func TestVerifyQuote(t *testing.T) {
-	f, ok := loadTDXFixture(t, "tdx_attestation.json")
-	if !ok {
-		t.Skip("fixture testdata/tdx_attestation.json not found, skipping")
-	}
+	f := loadTDXFixture(t, "tdx_attestation.json")
 
 	if len(f.Report.Evidence) == 0 {
 		t.Fatal("fixture has no evidence entries")
