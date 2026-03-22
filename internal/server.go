@@ -81,18 +81,28 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		return nil, err
 	}
 
-	sbState, sbErr := readSecureBootState()
-	if sbErr != nil {
+	// Skip UEFI secure boot detection in Nitro Enclaves: the enclave kernel
+	// has no EFI firmware so the sysfs variable does not exist, and boot
+	// integrity is proven by the NSM attestation document (PCR measurements).
+	if cfg.ReportEvidence.NitroNSM {
 		if cfg.SecureBootEnforce {
-			return nil, fmt.Errorf("secure boot: %w", sbErr)
+			logger.Warn("secure_boot.enforce ignored in nitro enclave, boot integrity is proven by nsm attestation")
 		}
-		logger.Warn("could not read secure boot state", "error", sbErr)
+		logger.Debug("skipping uefi secure boot detection in nitro enclave")
 	} else {
-		if cfg.SecureBootEnforce && !*sbState {
-			return nil, fmt.Errorf("secure boot is not enabled")
+		sbState, sbErr := readSecureBootState()
+		if sbErr != nil {
+			if cfg.SecureBootEnforce {
+				return nil, fmt.Errorf("secure boot: %w", sbErr)
+			}
+			logger.Warn("could not read secure boot state", "error", sbErr)
+		} else {
+			if cfg.SecureBootEnforce && !*sbState {
+				return nil, fmt.Errorf("secure boot is not enabled")
+			}
+			s.secureBoot = sbState
+			logger.Info("read secure boot state", "enabled", *sbState)
 		}
-		s.secureBoot = sbState
-		logger.Info("read secure boot state", "enabled", *sbState)
 	}
 
 	if cfg.TPM.Enabled {
