@@ -86,15 +86,18 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		}
 	}
 
-	var tpmPCRs map[string]string
+	var tpmData *TPMData
 	if s.cfg.TPM.Enabled {
 		start := time.Now()
-		var err error
-		tpmPCRs, err = tpm.ReadPCRs(s.cfg.TPM.Algorithm)
+		pcrs, err := tpm.ReadPCRs(s.cfg.TPM.Algorithm)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tpm: %v", err))
 		}
 		s.logger.Debug("tpm pcr read complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
+		tpmData = &TPMData{
+			Digest: s.cfg.TPM.AlgorithmName,
+			PCRs:   pcrs,
+		}
 	}
 
 	reportData := &AttestationReportData{
@@ -105,7 +108,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		Endorsements: endorsements,
 		UserData:     userData,
 		SecureBoot:   s.secureBoot,
-		TPMPCRs:      tpmPCRs,
+		TPMData:      tpmData,
 	}
 
 	reportDataJSON, err := json.MarshalWithOption(reportData, json.DisableHTMLEscape())

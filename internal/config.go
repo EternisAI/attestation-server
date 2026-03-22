@@ -31,8 +31,9 @@ type Config struct {
 
 // TPMConfig holds the configuration for generic TPM PCR reading.
 type TPMConfig struct {
-	Enabled   bool
-	Algorithm tpm2.TPMAlgID
+	Enabled       bool
+	Algorithm     tpm2.TPMAlgID
+	AlgorithmName string
 }
 
 // EvidenceConfig holds the evidence type flags.
@@ -60,9 +61,11 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	tpmAlgName := strings.ToUpper(viper.GetString("tpm.algorithm"))
 	tpmCfg := TPMConfig{
-		Enabled:   viper.GetBool("tpm.enabled"),
-		Algorithm: tpmAlg,
+		Enabled:       viper.GetBool("tpm.enabled"),
+		Algorithm:     tpmAlg,
+		AlgorithmName: tpmAlgName,
 	}
 
 	envVars := viper.GetStringSlice("report.user_data.env")
