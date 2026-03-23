@@ -413,13 +413,17 @@ type dependencyReport struct {
 // share the same TLS certificate and build info (same service, possibly
 // different replicas).
 //
+// The top-level report has a public cert but no client cert (external
+// Internet client at ingress). Each dependency report has a client cert
+// matching the caller's private cert (mTLS within the dependency chain).
+//
 // The test verifies:
 //  1. Top-level NitroTPM+SEV-SNP chained evidence
-//  2. Dependency nonce binding (each dep's nonce == hex digest of A's report data)
-//  3. Transitive C's nonce binding (nonce == hex digest of B's report data)
-//  4. Cryptographic verification of all evidence entries at every level
+//  2. Top-level e2e: public cert present, no client cert (ingress)
+//  3. Dependency nonce binding + client cert FP + crypto verification
+//  4. Transitive C's nonce binding via B's digest
 //  5. verifyDependencyReport succeeds for each dependency
-//  6. Nonce mismatch is correctly rejected
+//  6. Nonce mismatch / client cert FP mismatch are correctly rejected
 func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 	path := filepath.Join("testdata", "dependencies_attestation.json")
 	raw, err := os.ReadFile(path)
@@ -577,12 +581,35 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		}
 	})
 
+	// Extract and validate top-level TLS data.
+	var topData AttestationReportData
+	if err := json.Unmarshal(f.Report.Data, &topData); err != nil {
+		t.Fatalf("parsing top-level data: %v", err)
+	}
+
+	t.Run("top-level e2e: public cert at ingress, no client cert", func(t *testing.T) {
+		if topData.TLS == nil {
+			t.Fatal("top-level report missing TLS data")
+		}
+		if topData.TLS.Public == nil || topData.TLS.Public.CertificateFingerprint == "" {
+			t.Fatal("top-level report missing public certificate (ingress e2e)")
+		}
+		if topData.TLS.Client != nil {
+			t.Error("top-level report should not have client cert (external client at ingress)")
+		}
+	})
+
+	if topData.TLS == nil || topData.TLS.Private == nil {
+		t.Fatal("top-level report missing TLS private cert data")
+	}
+	aPrivateFP := topData.TLS.Private.CertificateFingerprint
+
 	t.Run("dependency[0] verifyDependencyReport", func(t *testing.T) {
 		var report AttestationReport
 		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
-		if err := verifyDependencyReport(&report, nonceHex, now); err != nil {
+		if err := verifyDependencyReport(&report, nonceHex, aPrivateFP, now); err != nil {
 			t.Fatalf("verifyDependencyReport() error: %v", err)
 		}
 	})
@@ -632,7 +659,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err := json.Unmarshal(f.Report.Dependencies[1], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
-		if err := verifyDependencyReport(&report, nonceHex, now); err != nil {
+		if err := verifyDependencyReport(&report, nonceHex, aPrivateFP, now); err != nil {
 			t.Fatalf("verifyDependencyReport() error: %v", err)
 		}
 	})
@@ -682,6 +709,17 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		}
 	})
 
+	// B's private cert fingerprint is what B presents as client cert to
+	// transitive C.
+	var bData AttestationReportData
+	if err := json.Unmarshal(deps[0].Data, &bData); err != nil {
+		t.Fatalf("parsing dep[0] data: %v", err)
+	}
+	if bData.TLS == nil || bData.TLS.Private == nil {
+		t.Fatal("dep[0] missing TLS private cert data")
+	}
+	bPrivateFP := bData.TLS.Private.CertificateFingerprint
+
 	t.Run("transitive C via B verifyDependencyReport", func(t *testing.T) {
 		var bDataBuf bytes.Buffer
 		json.Compact(&bDataBuf, deps[0].Data)
@@ -692,7 +730,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err := json.Unmarshal(deps[0].Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing nested dependency: %v", err)
 		}
-		if err := verifyDependencyReport(&report, bNonceHex, now); err != nil {
+		if err := verifyDependencyReport(&report, bNonceHex, bPrivateFP, now); err != nil {
 			t.Fatalf("verifyDependencyReport() error: %v", err)
 		}
 	})
@@ -704,7 +742,8 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
-		err := verifyDependencyReport(&report, "0000000000000000", now)
+		// Nonce check fires before client cert check, so the fingerprint is irrelevant here.
+		err := verifyDependencyReport(&report, "0000000000000000", aPrivateFP, now)
 		if err == nil {
 			t.Fatal("verifyDependencyReport() should fail with wrong nonce")
 		}
@@ -720,9 +759,78 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err := json.Unmarshal(deps[0].Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing transitive dependency: %v", err)
 		}
-		err := verifyDependencyReport(&report, nonceHex, now)
+		err := verifyDependencyReport(&report, nonceHex, bPrivateFP, now)
 		if err == nil {
 			t.Fatal("verifyDependencyReport() should fail when using A's nonce for transitive C")
+		}
+	})
+
+	// --- Step 5: Negative tests — tamper with fixture data ---
+
+	t.Run("dependency[0] fails with wrong client cert FP", func(t *testing.T) {
+		var report AttestationReport
+		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
+			t.Fatalf("parsing dependency: %v", err)
+		}
+		wrongFP := "0000000000000000000000000000000000000000000000000000000000000000"
+		err := verifyDependencyReport(&report, nonceHex, wrongFP, now)
+		if err == nil {
+			t.Fatal("expected error for wrong client cert FP")
+		}
+		if !isE2EError(err) {
+			t.Fatalf("expected e2e error, got: %v", err)
+		}
+	})
+
+	t.Run("dependency[0] fails with empty client cert FP", func(t *testing.T) {
+		// Tamper: replace the dependency's data to remove client cert.
+		var depReport AttestationReport
+		if err := json.Unmarshal(f.Report.Dependencies[0], &depReport); err != nil {
+			t.Fatalf("parsing dependency: %v", err)
+		}
+		var depData AttestationReportData
+		if err := json.Unmarshal(depReport.Data, &depData); err != nil {
+			t.Fatalf("parsing dep data: %v", err)
+		}
+		depData.TLS.Client = nil
+		tamperedData, _ := json.Marshal(depData)
+		depReport.Data = json.RawMessage(tamperedData)
+
+		// Nonce will still match but client cert is missing — e2e error.
+		err := verifyDependencyReport(&depReport, nonceHex, aPrivateFP, now)
+		if err == nil {
+			t.Fatal("expected error for missing client cert in tampered dep")
+		}
+		if !isE2EError(err) {
+			t.Fatalf("expected e2e error, got: %v", err)
+		}
+	})
+
+	t.Run("dependency[0] tampered data fails crypto verification", func(t *testing.T) {
+		// Tamper: modify the client cert FP in dep data. Nonce + client
+		// cert check pass (we supply the tampered FP) but the crypto
+		// evidence was signed over the original data, so it must fail.
+		var depReport AttestationReport
+		if err := json.Unmarshal(f.Report.Dependencies[0], &depReport); err != nil {
+			t.Fatalf("parsing dependency: %v", err)
+		}
+		var depData AttestationReportData
+		if err := json.Unmarshal(depReport.Data, &depData); err != nil {
+			t.Fatalf("parsing dep data: %v", err)
+		}
+		tamperedFP := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+		depData.TLS.Client.CertificateFingerprint = tamperedFP
+		tamperedDataJSON, _ := json.Marshal(depData)
+		depReport.Data = json.RawMessage(tamperedDataJSON)
+
+		err := verifyDependencyReport(&depReport, nonceHex, tamperedFP, now)
+		if err == nil {
+			t.Fatal("expected crypto verification failure for tampered data")
+		}
+		// Should NOT be an e2e error — nonce+client cert checks pass,
+		// but the TEE evidence doesn't match the tampered data hash.
+		if isE2EError(err) {
+			t.Fatalf("expected crypto error, got e2e error: %v", err)
 		}
 	})
 }

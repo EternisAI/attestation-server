@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rsa"
@@ -8,10 +9,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -34,44 +37,49 @@ type certBundle struct {
 }
 
 // tlsCertificates holds the current public and private certificate bundles
-// under a RWMutex so the hot-reload goroutine can swap them while request
-// handlers read them concurrently.
+// and the private CA bundle under a RWMutex so the hot-reload goroutine
+// can swap them while request handlers read them concurrently.
 type tlsCertificates struct {
-	mu      sync.RWMutex
-	public  *certBundle
-	private *certBundle
+	mu        sync.RWMutex
+	public    *certBundle
+	private   *certBundle
+	privateCA *caBundle
 }
 
-// validateTLSConfig checks that at least one TLS certificate set is configured
-// and that each set has both cert and key paths in the same directory.
+// validateTLSConfig checks that the private TLS certificate set is configured
+// (required for end-to-end encryption bound to TEE attestation) and that each
+// set has both cert and key paths in the same directory. The public certificate
+// set remains optional.
 func validateTLSConfig(cfg *Config) error {
 	pubHasCert := cfg.PublicTLSCertPath != ""
 	pubHasKey := cfg.PublicTLSKeyPath != ""
 	privHasCert := cfg.PrivateTLSCertPath != ""
 	privHasKey := cfg.PrivateTLSKeyPath != ""
 
-	pubSet := pubHasCert || pubHasKey
-	privSet := privHasCert || privHasKey
-
-	if !pubSet && !privSet {
-		return fmt.Errorf("at least one TLS certificate set (public or private) must be configured")
+	if !privHasCert || !privHasKey {
+		if privHasCert || privHasKey {
+			return fmt.Errorf("both private TLS cert and key paths must be specified")
+		}
+		return fmt.Errorf("private TLS certificate is required for attestation-bound end-to-end encryption")
+	}
+	if filepath.Dir(cfg.PrivateTLSCertPath) != filepath.Dir(cfg.PrivateTLSKeyPath) {
+		return fmt.Errorf("private TLS cert and key paths must be in the same directory")
 	}
 
+	if cfg.PrivateTLSCAPath == "" {
+		return fmt.Errorf("private TLS CA bundle is required (all private certificates in the dependency chain must be issued by the same CA)")
+	}
+	if filepath.Dir(cfg.PrivateTLSCAPath) != filepath.Dir(cfg.PrivateTLSCertPath) {
+		return fmt.Errorf("private TLS CA path must be in the same directory as cert and key")
+	}
+
+	pubSet := pubHasCert || pubHasKey
 	if pubSet {
 		if !pubHasCert || !pubHasKey {
 			return fmt.Errorf("both public TLS cert and key paths must be specified")
 		}
 		if filepath.Dir(cfg.PublicTLSCertPath) != filepath.Dir(cfg.PublicTLSKeyPath) {
 			return fmt.Errorf("public TLS cert and key paths must be in the same directory")
-		}
-	}
-
-	if privSet {
-		if !privHasCert || !privHasKey {
-			return fmt.Errorf("both private TLS cert and key paths must be specified")
-		}
-		if filepath.Dir(cfg.PrivateTLSCertPath) != filepath.Dir(cfg.PrivateTLSKeyPath) {
-			return fmt.Errorf("private TLS cert and key paths must be in the same directory")
 		}
 	}
 
@@ -144,9 +152,95 @@ func joinSANs(dnsNames []string, ips []net.IP, uris []*url.URL) string {
 	return strings.Join(sans, ",")
 }
 
+// caBundle holds both root and intermediate certificates parsed from a
+// PEM CA bundle. Roots are self-signed CA certificates (trust anchors);
+// intermediates are all other CA certificates that may appear in the
+// chain between the leaf and a root.
+type caBundle struct {
+	roots         *x509.CertPool
+	intermediates *x509.CertPool
+}
+
+// loadCABundle reads a PEM-encoded CA bundle from disk and separates the
+// certificates into roots (self-signed) and intermediates. This allows
+// x509.Certificate.Verify to build chains through intermediate CAs that
+// are only present in the bundle, not in the TLS cert file.
+func loadCABundle(path string) (*caBundle, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading CA file %s: %w", path, err)
+	}
+	roots := x509.NewCertPool()
+	intermediates := x509.NewCertPool()
+	var found bool
+	for {
+		var block *pem.Block
+		block, data = pem.Decode(data)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parsing CA certificate: %w", err)
+		}
+		// Self-signed: issuer == subject. This is the standard structural
+		// indicator and avoids depending on CheckSignatureFrom, which
+		// rejects SHA-1 signatures in Go 1.18+.
+		if cert.IsCA && bytes.Equal(cert.RawIssuer, cert.RawSubject) {
+			roots.AddCert(cert)
+		} else {
+			intermediates.AddCert(cert)
+		}
+		found = true
+	}
+	if !found {
+		return nil, fmt.Errorf("no PEM certificates found in %s", path)
+	}
+	return &caBundle{roots: roots, intermediates: intermediates}, nil
+}
+
+// verifyCertAgainstCA verifies that the leaf certificate in the given
+// tls.Certificate chains to a root in the CA bundle. Intermediates are
+// sourced from both the TLS cert file (cert.Certificate[1:]) and the
+// CA bundle, so chains like root → intermediate1 → intermediate2 → leaf
+// work even when the TLS file only contains the leaf.
+func verifyCertAgainstCA(cert *tls.Certificate, bundle *caBundle) error {
+	if len(cert.Certificate) == 0 {
+		return fmt.Errorf("certificate has no DER data")
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return fmt.Errorf("parsing leaf certificate: %w", err)
+	}
+
+	// Start with intermediates from the CA bundle, then add any
+	// intermediates bundled in the TLS cert file itself.
+	intermediates := bundle.intermediates.Clone()
+	for _, derBytes := range cert.Certificate[1:] {
+		ic, err := x509.ParseCertificate(derBytes)
+		if err != nil {
+			return fmt.Errorf("parsing intermediate certificate: %w", err)
+		}
+		intermediates.AddCert(ic)
+	}
+
+	_, err = leaf.Verify(x509.VerifyOptions{
+		Roots:         bundle.roots,
+		Intermediates: intermediates,
+	})
+	if err != nil {
+		return fmt.Errorf("certificate does not chain to configured CA: %w", err)
+	}
+	return nil
+}
+
 // loadCertificates loads the initial public and/or private TLS certificates
-// from disk, validates key types, computes fingerprints, and stores them in
-// the server's tlsCertificates for use by request handlers.
+// from disk, validates key types, computes fingerprints, optionally verifies
+// the private cert against a CA bundle, and stores them in the server's
+// tlsCertificates for use by request handlers.
 func (s *Server) loadCertificates() error {
 	if s.cfg.PublicTLSCertPath != "" {
 		cert, err := tls.LoadX509KeyPair(s.cfg.PublicTLSCertPath, s.cfg.PublicTLSKeyPath)
@@ -182,6 +276,14 @@ func (s *Server) loadCertificates() error {
 		if _, ok := cert.PrivateKey.(*ecdsa.PrivateKey); !ok {
 			return fmt.Errorf("private TLS key must be ECDSA, got %T", cert.PrivateKey)
 		}
+		cab, err := loadCABundle(s.cfg.PrivateTLSCAPath)
+		if err != nil {
+			return fmt.Errorf("loading private TLS CA: %w", err)
+		}
+		if err := verifyCertAgainstCA(&cert, cab); err != nil {
+			return fmt.Errorf("private TLS certificate CA verification: %w", err)
+		}
+		s.logger.Debug("verified private TLS certificate against CA bundle", "ca", s.cfg.PrivateTLSCAPath)
 		certFP, pkFP, err := computeFingerprints(&cert)
 		if err != nil {
 			return fmt.Errorf("computing private certificate fingerprints: %w", err)
@@ -189,11 +291,14 @@ func (s *Server) loadCertificates() error {
 		b := &certBundle{cert: &cert, certFingerprint: certFP, pubKeyFingerprint: pkFP}
 		s.certs.mu.Lock()
 		s.certs.private = b
+		s.certs.privateCA = cab
 		s.certs.mu.Unlock()
-		attrs := append([]slog.Attr{
+		attrs := []slog.Attr{
 			slog.String("cert", s.cfg.PrivateTLSCertPath),
 			slog.String("key", s.cfg.PrivateTLSKeyPath),
-		}, certLeafAttrs(b)...)
+			slog.String("ca", s.cfg.PrivateTLSCAPath),
+		}
+		attrs = append(attrs, certLeafAttrs(b)...)
 		s.logger.LogAttrs(context.Background(), slog.LevelInfo, "loaded private TLS certificate", attrs...)
 	}
 
@@ -297,6 +402,15 @@ func (s *Server) reloadPrivateCert() {
 		s.logger.Error("reloaded private TLS key is not ECDSA", "type", fmt.Sprintf("%T", cert.PrivateKey))
 		return
 	}
+	cab, err := loadCABundle(s.cfg.PrivateTLSCAPath)
+	if err != nil {
+		s.logger.Error("failed to load private TLS CA for reload", "error", err)
+		return
+	}
+	if err := verifyCertAgainstCA(&cert, cab); err != nil {
+		s.logger.Error("reloaded private TLS certificate does not chain to CA", "error", err)
+		return
+	}
 	certFP, pkFP, err := computeFingerprints(&cert)
 	if err != nil {
 		s.logger.Error("failed to compute private certificate fingerprints", "error", err)
@@ -305,6 +419,7 @@ func (s *Server) reloadPrivateCert() {
 	b := &certBundle{cert: &cert, certFingerprint: certFP, pubKeyFingerprint: pkFP}
 	s.certs.mu.Lock()
 	s.certs.private = b
+	s.certs.privateCA = cab
 	s.certs.mu.Unlock()
 	s.logger.LogAttrs(context.Background(), slog.LevelInfo, "reloaded private TLS certificate", certLeafAttrs(b)...)
 }

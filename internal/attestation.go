@@ -118,6 +118,16 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		}
 	}
 
+	// Every attestation response must prove end-to-end encryption. The
+	// client certificate fingerprint (from XFCC) covers service-to-service
+	// mTLS within the dependency chain. The public certificate covers
+	// external clients at the Internet-facing ingress. At least one must
+	// be present; otherwise the response cannot be trusted as e2e encrypted.
+	if tlsData.Client == nil && tlsData.Public == nil {
+		s.logger.Error("attestation request has neither client certificate (XFCC) nor public certificate, cannot prove end-to-end encryption", "request_id", requestID)
+		return fiber.NewError(fiber.StatusBadRequest, "end-to-end encryption proof required: provide a client certificate or configure a public certificate")
+	}
+
 	reportData := &AttestationReportData{
 		RequestID:    requestID,
 		Nonce:        nonce,

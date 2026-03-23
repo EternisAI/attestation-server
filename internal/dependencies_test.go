@@ -21,9 +21,23 @@ import (
 // object so that verifyDependencyReport can unmarshal it.
 func makeReportJSON(t *testing.T, nonceHex string, evidence []*AttestationEvidence) []byte {
 	t.Helper()
+	return makeReportJSONWithClientCert(t, nonceHex, evidence, "")
+}
+
+// makeReportJSONWithClientCert builds a minimal AttestationReport with an
+// optional client certificate fingerprint in data.tls.client.certificate.
+func makeReportJSONWithClientCert(t *testing.T, nonceHex string, evidence []*AttestationEvidence, clientCertFP string) []byte {
+	t.Helper()
 	reportData := &AttestationReportData{
 		RequestID: "test-request-id",
 		Nonce:     nonceHex,
+	}
+	if clientCertFP != "" {
+		reportData.TLS = &TLSReportData{
+			Client: &TLSCertificateData{
+				CertificateFingerprint: clientCertFP,
+			},
+		}
 	}
 	dataJSON, err := json.Marshal(reportData)
 	if err != nil {
@@ -40,13 +54,27 @@ func makeReportJSON(t *testing.T, nonceHex string, evidence []*AttestationEviden
 	return body
 }
 
+// testClientFP is a fake client cert fingerprint used in unit tests.
+const testClientFP = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+// reportDataWithClientCert builds an AttestationReportData with the given nonce
+// and a TLS client certificate fingerprint matching testClientFP.
+func reportDataWithClientCert(nonce string) *AttestationReportData {
+	return &AttestationReportData{
+		Nonce: nonce,
+		TLS: &TLSReportData{
+			Client: &TLSCertificateData{
+				CertificateFingerprint: testClientFP,
+			},
+		},
+	}
+}
+
 // --- verifyDependencyReport tests (no fixtures needed) ---
 
 func TestVerifyDependencyReport_NonceMismatch(t *testing.T) {
-	reportData := &AttestationReportData{
-		RequestID: "req-1",
-		Nonce:     "aabbccdd",
-	}
+	reportData := reportDataWithClientCert("aabbccdd")
+	reportData.RequestID = "req-1"
 	dataJSON, err := json.Marshal(reportData)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +84,7 @@ func TestVerifyDependencyReport_NonceMismatch(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err = verifyDependencyReport(report, "different-nonce", time.Now())
+	err = verifyDependencyReport(report, "different-nonce", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for nonce mismatch, got nil")
 	}
@@ -66,14 +94,14 @@ func TestVerifyDependencyReport_NonceMismatch(t *testing.T) {
 }
 
 func TestVerifyDependencyReport_EmptyEvidence(t *testing.T) {
-	reportData := &AttestationReportData{Nonce: "abc123"}
+	reportData := reportDataWithClientCert("abc123")
 	dataJSON, _ := json.Marshal(reportData)
 	report := &AttestationReport{
 		Evidence: []*AttestationEvidence{},
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReport(report, "abc123", time.Now())
+	err := verifyDependencyReport(report, "abc123", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for empty evidence, got nil")
 	}
@@ -83,14 +111,14 @@ func TestVerifyDependencyReport_EmptyEvidence(t *testing.T) {
 }
 
 func TestVerifyDependencyReport_NilEvidence(t *testing.T) {
-	reportData := &AttestationReportData{Nonce: "abc123"}
+	reportData := reportDataWithClientCert("abc123")
 	dataJSON, _ := json.Marshal(reportData)
 	report := &AttestationReport{
 		Evidence: nil,
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReport(report, "abc123", time.Now())
+	err := verifyDependencyReport(report, "abc123", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for nil evidence, got nil")
 	}
@@ -101,14 +129,14 @@ func TestVerifyDependencyReport_NilEvidence(t *testing.T) {
 
 func TestVerifyDependencyReport_UnknownEvidenceKind(t *testing.T) {
 	nonceHex := "aabb"
-	reportData := &AttestationReportData{Nonce: nonceHex}
+	reportData := reportDataWithClientCert(nonceHex)
 	dataJSON, _ := json.Marshal(reportData)
 	report := &AttestationReport{
 		Evidence: []*AttestationEvidence{{Kind: "unknown-tee", Blob: []byte("data")}},
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReport(report, nonceHex, time.Now())
+	err := verifyDependencyReport(report, nonceHex, testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for unknown evidence kind, got nil")
 	}
@@ -123,7 +151,7 @@ func TestVerifyDependencyReport_InvalidDataJSON(t *testing.T) {
 		Data:     json.RawMessage(`not valid json`),
 	}
 
-	err := verifyDependencyReport(report, "anything", time.Now())
+	err := verifyDependencyReport(report, "anything", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for invalid data JSON, got nil")
 	}
@@ -132,15 +160,70 @@ func TestVerifyDependencyReport_InvalidDataJSON(t *testing.T) {
 	}
 }
 
+func TestVerifyDependencyReport_MissingClientCert(t *testing.T) {
+	reportData := &AttestationReportData{Nonce: "aabb"}
+	dataJSON, _ := json.Marshal(reportData)
+	report := &AttestationReport{
+		Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
+		Data:     json.RawMessage(dataJSON),
+	}
+
+	err := verifyDependencyReport(report, "aabb", testClientFP, time.Now())
+	if err == nil {
+		t.Fatal("expected error for missing client cert, got nil")
+	}
+	if !isE2EError(err) {
+		t.Fatalf("expected e2e error, got: %v", err)
+	}
+	if !contains(err.Error(), "missing client certificate") {
+		t.Fatalf("error %q does not contain 'missing client certificate'", err.Error())
+	}
+}
+
+func TestVerifyDependencyReport_ClientCertMismatch(t *testing.T) {
+	reportData := &AttestationReportData{
+		Nonce: "aabb",
+		TLS: &TLSReportData{
+			Client: &TLSCertificateData{
+				CertificateFingerprint: "aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222",
+			},
+		},
+	}
+	dataJSON, _ := json.Marshal(reportData)
+	report := &AttestationReport{
+		Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
+		Data:     json.RawMessage(dataJSON),
+	}
+
+	err := verifyDependencyReport(report, "aabb", testClientFP, time.Now())
+	if err == nil {
+		t.Fatal("expected error for client cert mismatch, got nil")
+	}
+	if !isE2EError(err) {
+		t.Fatalf("expected e2e error, got: %v", err)
+	}
+	if !contains(err.Error(), "mismatch") {
+		t.Fatalf("error %q does not contain 'mismatch'", err.Error())
+	}
+}
+
 // --- httptest-based integration tests ---
 
-func testServer(cfg *Config, ctx context.Context) *Server {
-	return &Server{
+func testServer(t *testing.T, cfg *Config, ctx context.Context) *Server {
+	t.Helper()
+	s := &Server{
 		ctx:        ctx,
 		cfg:        cfg,
 		logger:     slog.Default(),
 		instanceID: "test-instance-id",
 	}
+	cert := generateTestCertECDSA(t)
+	certFP, pkFP, err := computeFingerprints(&cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.certs.private = &certBundle{cert: &cert, certFingerprint: certFP, pubKeyFingerprint: pkFP}
+	return s
 }
 
 func TestFetchAndVerifyDependency_NonceHeaderForwarded(t *testing.T) {
@@ -159,7 +242,7 @@ func TestFetchAndVerifyDependency_NonceHeaderForwarded(t *testing.T) {
 	defer ts.Close()
 
 	ctx := context.Background()
-	s := testServer(&Config{}, ctx)
+	s := testServer(t, &Config{}, ctx)
 	ep, _ := url.Parse(ts.URL)
 	client := &http.Client{}
 
@@ -181,7 +264,7 @@ func TestFetchAndVerifyDependency_Non200Status(t *testing.T) {
 			defer ts.Close()
 
 			ctx := context.Background()
-			s := testServer(&Config{}, ctx)
+			s := testServer(t, &Config{}, ctx)
 			ep, _ := url.Parse(ts.URL)
 
 			_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "")
@@ -203,7 +286,7 @@ func TestFetchAndVerifyDependency_InvalidJSON(t *testing.T) {
 	defer ts.Close()
 
 	ctx := context.Background()
-	s := testServer(&Config{}, ctx)
+	s := testServer(t, &Config{}, ctx)
 	ep, _ := url.Parse(ts.URL)
 
 	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "")
@@ -223,7 +306,7 @@ func TestFetchAndVerifyDependency_ContextCancellation(t *testing.T) {
 	defer ts.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := testServer(&Config{}, ctx)
+	s := testServer(t, &Config{}, ctx)
 	ep, _ := url.Parse(ts.URL)
 
 	// Cancel immediately so the request is aborted.
@@ -247,7 +330,7 @@ func TestFetchAndVerifyDependency_NonceMismatchInResponse(t *testing.T) {
 	defer ts.Close()
 
 	ctx := context.Background()
-	s := testServer(&Config{}, ctx)
+	s := testServer(t, &Config{}, ctx)
 	ep, _ := url.Parse(ts.URL)
 
 	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "correct-nonce", "test-req-id", "")
@@ -269,7 +352,7 @@ func TestFetchAndVerifyDependency_UsesGETMethod(t *testing.T) {
 	defer ts.Close()
 
 	ctx := context.Background()
-	s := testServer(&Config{}, ctx)
+	s := testServer(t, &Config{}, ctx)
 	ep, _ := url.Parse(ts.URL)
 
 	// Will fail on parse but we only care about method.
@@ -284,7 +367,7 @@ func TestFetchAndVerifyDependency_UsesGETMethod(t *testing.T) {
 
 func TestFetchDependencies_EmptyEndpoints(t *testing.T) {
 	ctx := context.Background()
-	s := testServer(&Config{}, ctx)
+	s := testServer(t, &Config{}, ctx)
 
 	deps, err := s.fetchDependencies("aabb", "test-req-id", "")
 	if err != nil {
@@ -309,7 +392,7 @@ func TestFetchDependencies_AllEndpointsFail(t *testing.T) {
 	ep2, _ := url.Parse(ts2.URL)
 
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep1, ep2},
 	}, ctx)
 
@@ -344,7 +427,7 @@ func TestFetchDependencies_OneEndpointFails(t *testing.T) {
 	epOK, _ := url.Parse(tsOK.URL)
 
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{epFail, epOK},
 	}, ctx)
 
@@ -383,7 +466,7 @@ func TestFetchDependencies_ParallelExecution(t *testing.T) {
 	ep3, _ := url.Parse(ts3.URL)
 
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep1, ep2, ep3},
 	}, ctx)
 
@@ -408,7 +491,7 @@ func TestFetchDependencies_ErrorDoesNotLeakURL(t *testing.T) {
 	ep, _ := url.Parse(ts.URL)
 
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep},
 	}, ctx)
 
@@ -433,7 +516,7 @@ func TestFetchDependencies_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel before fetch.
 
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep},
 	}, ctx)
 
@@ -474,7 +557,7 @@ func TestFetchDependencies_NonceForwardedToAllEndpoints(t *testing.T) {
 	nonceHex := hex.EncodeToString(digest[:])
 
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep0, ep1},
 	}, ctx)
 
@@ -498,7 +581,7 @@ func TestFetchAndVerifyDependency_RequestIDForwarded(t *testing.T) {
 	defer ts.Close()
 
 	ctx := context.Background()
-	s := testServer(&Config{}, ctx)
+	s := testServer(t, &Config{}, ctx)
 	ep, _ := url.Parse(ts.URL)
 
 	wantID := "my-unique-request-id-123"
@@ -526,7 +609,7 @@ func TestFetchDependencies_RequestIDForwardedToAll(t *testing.T) {
 	ep1, _ := url.Parse(ts1.URL)
 
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep0, ep1},
 	}, ctx)
 
@@ -552,7 +635,7 @@ func TestCycleDetection_PathHeaderPropagated(t *testing.T) {
 
 	ep, _ := url.Parse(ts.URL)
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep},
 	}, ctx)
 
@@ -573,7 +656,7 @@ func TestCycleDetection_PathHeaderAppended(t *testing.T) {
 
 	ep, _ := url.Parse(ts.URL)
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep},
 	}, ctx)
 
@@ -590,7 +673,7 @@ func TestCycleDetection_DiamondDependencyAllowed(t *testing.T) {
 	// D should receive requests with different paths (through B and through C)
 	// but neither path contains D's own ID, so no cycle is detected.
 	// This test verifies that sharing a dependency is NOT flagged as a cycle.
-	s := testServer(&Config{}, context.Background())
+	s := testServer(t, &Config{}, context.Background())
 	s.instanceID = "server-D"
 
 	// Path through B: A -> B -> D — no cycle.
@@ -608,12 +691,46 @@ func TestCycleDetection_DependencyReturns409(t *testing.T) {
 
 	ep, _ := url.Parse(ts.URL)
 	ctx := context.Background()
-	s := testServer(&Config{
+	s := testServer(t, &Config{
 		DependencyEndpoints: []*url.URL{ep},
 	}, ctx)
 
 	_, err := s.fetchDependencies("aabb", "req-id", "")
 	if err == nil {
 		t.Fatal("expected error when dependency returns 409, got nil")
+	}
+}
+
+// --- client certificate fingerprint enforcement tests ---
+
+func TestFetchAndVerifyDependency_E2EErrorMasked(t *testing.T) {
+	// When a dependency responds without client cert data,
+	// fetchAndVerifyDependency returns an opaque error (not leaking
+	// internal details) while the descriptive message is logged.
+	ctx := context.Background()
+	s := testServer(t, &Config{}, ctx)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonce := r.Header.Get(nonceHeader)
+		// Report with matching nonce + client cert, but fake evidence blob.
+		// verifyDependencyReport will fail at crypto before e2e check.
+		body := makeReportJSONWithClientCert(t, nonce, []*AttestationEvidence{
+			{Kind: "nitronsm", Blob: []byte("fake")},
+		}, "")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	}))
+	defer ts.Close()
+
+	ep, _ := url.Parse(ts.URL)
+
+	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// The e2e check fires before crypto in verifyDependencyReport, so
+	// it should be the opaque e2e error.
+	if !contains(err.Error(), "end-to-end encryption") {
+		t.Fatalf("expected e2e error, got: %v", err)
 	}
 }

@@ -1,6 +1,6 @@
 # attestation-server
 
-A Go HTTP server for serving TEE (Trusted Execution Environment) attestation documents.
+A Go HTTP server for serving TEE (Trusted Execution Environment) attestation documents. The server runs behind an Envoy reverse proxy that terminates TLS — Envoy uses the private certificate for service-to-service mTLS (setting the XFCC header with the client cert hash) and optionally the public certificate for Internet-facing ingress without client certificates.
 
 ## Tech stack
 
@@ -18,7 +18,7 @@ internal/config.go         # Config struct and LoadConfig() (package app)
 internal/dependencies.go   # Transitive dependency attestation: parallel fetch, verify, cycle detection (package app)
 internal/logging.go        # NewLogger() (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
-internal/tls.go            # TLS certificate loading and hot-reload (package app)
+internal/tls.go            # TLS certificate/CA loading, verification, and hot-reload (package app)
 internal/types.go          # BuildInfo, AttestationReport, AttestationReportData, and other shared structs (package app)
 pkg/nitro/nitro.go         # Shared Nitro attestation: COSE_Sign1 verification, cert chain validation, embedded AWS Nitro root CA (package nitro)
 pkg/nitro/nsm.go           # NSM device access and attestation via /dev/nsm (package nitro)
@@ -83,6 +83,7 @@ key_path  = ""
 [tls.private]
 cert_path = ""
 key_path  = ""
+ca_path   = ""  # required
 ```
 
 ### CLI flags
@@ -110,8 +111,9 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_PATHS_ENDORSEMENTS` | `paths.endorsements` | `/etc/endorsements.json` | Path to endorsements URL list file |
 | `ATTESTATION_SERVER_TLS_PUBLIC_CERT_PATH` | `tls.public.cert_path` | — | Path to public TLS certificate (PEM) |
 | `ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH` | `tls.public.key_path` | — | Path to public TLS private key (PEM) |
-| `ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH` | `tls.private.cert_path` | — | Path to private TLS certificate (PEM) |
-| `ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH` | `tls.private.key_path` | — | Path to private TLS private key (PEM) |
+| `ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH` | `tls.private.cert_path` | — | **Required.** Path to private TLS certificate (PEM) |
+| `ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH` | `tls.private.key_path` | — | **Required.** Path to private TLS private key (PEM) |
+| `ATTESTATION_SERVER_TLS_PRIVATE_CA_PATH` | `tls.private.ca_path` | — | **Required.** PEM CA bundle — all private certs in the dependency chain must be issued by this CA |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_NITRONSM` | `report.evidence.nitronsm` | `false` | Enable Nitro NSM evidence (exclusive: cannot combine with others) |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_NITROTPM` | `report.evidence.nitrotpm` | `false` | Enable Nitro TPM evidence |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP` | `report.evidence.sevsnp` | `false` | Enable SEV-SNP evidence |
@@ -121,7 +123,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_TPM_ALGORITHM` | `tpm.algorithm` | `sha384` | Hash algorithm for TPM PCR values: `sha1`/`sha256`/`sha384`/`sha512` (case-insensitive) |
 | `ATTESTATION_SERVER_SECURE_BOOT_ENFORCE` | `secure_boot.enforce` | `false` | Enforce UEFI Secure Boot; exit on startup if not enabled. UEFI secure boot detection is skipped when NitroNSM evidence is enabled (enclaves have no EFI firmware; boot integrity is proven by NSM PCR measurements) |
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Comma-separated environment variable names to include in report (unique) |
-| `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints skip TLS verification (attestation proves certificate binding); HTTP endpoints must be proxied through a local mTLS-enabling proxy |
+| `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints are verified against the private CA bundle (mTLS); HTTP endpoints must be proxied through a local mTLS-enabling proxy |
 
 List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS`) support comma-separated values: `VAR=a,b,c`. Spaces around commas are trimmed.
 
@@ -155,6 +157,18 @@ When `dependencies.endpoints` is configured, the attestation handler fetches and
 
 Each dependency response is parsed as an `AttestationReport`, verified (nonce binding + cryptographic evidence verification for all known TEE types including NitroTPM→SEV-SNP chaining), and embedded as `json.RawMessage` in the `dependencies` field. Raw bytes are stored instead of re-marshaled structs to avoid `goccy/go-json` zero-copy string issues.
 
+After cryptographic verification, the client certificate fingerprint check enforces end-to-end encryption: the dependency's `data.tls.client.certificate` must be present and match the SHA-256 fingerprint of our private certificate (which is used as the client cert for outgoing mTLS connections). If missing or mismatched, a descriptive error is logged and an opaque error is returned to the caller.
+
+The dependency HTTP client verifies server certificates against the private CA bundle (`tls.private.ca_path`) and presents the private certificate as the TLS client cert. All private certificates in the dependency chain must be issued by the same CA — Envoy only populates the XFCC header (which provides the client cert fingerprint) when the client cert passes CA verification.
+
+### End-to-end encryption proof
+
+Every attestation response must prove end-to-end encryption via at least one of:
+- `data.tls.client.certificate` — XFCC-forwarded client cert fingerprint (service-to-service mTLS within the dependency chain)
+- `data.tls.public` — public certificate (external Internet clients at the first ingress hop, without client certificates)
+
+If neither is present, the handler returns 400. This ensures the attestation evidence is always bound to a TLS channel that the verifier can reason about.
+
 ### Cycle detection
 
 Dependency cycles are detected via the `X-Attestation-Path` header, which carries a comma-separated list of service identities visited along the dependency chain. Each server appends its own identity before forwarding to dependencies. If a server finds its identity already in the path, it returns 409 Conflict, which propagates up the chain.
@@ -164,6 +178,10 @@ The service identity is deterministic: `SHA-256(json(build_info) || cert_subject
 ### HTTP client hardening
 
 The dependency HTTP client is hardened against slowloris-like attacks with per-phase timeouts (dial: 5s, TLS handshake: 10s, response headers: 15s, overall: 30s), a 4 MiB response body limit, and disabled keep-alives.
+
+### Certificate hot-reload
+
+Certificate files (public cert/key, private cert/key, and private CA bundle) are hot-reloaded via fsnotify directory watchers. Since `validateTLSConfig` requires the CA bundle to be in the same directory as the private cert/key, a single watcher covers all three files. On reload, the private cert, CA bundle, and computed fingerprints are swapped atomically under the same `sync.RWMutex` (`tlsCertificates.mu`) that protects concurrent reads from request handlers and the dependency HTTP client.
 
 ## Testing
 
@@ -194,7 +212,7 @@ Fixture files:
 - `pkg/sevsnp/testdata/sevsnp_attestation_gcp.json`
 - `pkg/tdx/testdata/tdx_attestation.json`
 - `internal/testdata/nitrotpm_sevsnp_attestation.json` (chained NitroTPM → SEV-SNP)
-- `internal/testdata/dependencies_attestation.json` (diamond dependency graph: A → {B, C}, B → C with NitroTPM+SEV-SNP, TDX, and SEV-SNP evidence across services)
+- `internal/testdata/dependencies_attestation.json` (diamond dependency graph: A → {B, C}, B → C with NitroTPM+SEV-SNP, TDX, and SEV-SNP evidence across services; top-level has public cert at ingress with no client cert, each dependency has client cert matching caller's private cert)
 
 ## Development
 

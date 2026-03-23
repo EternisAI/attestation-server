@@ -32,8 +32,8 @@ enforce = false
 [dependencies]
 # URLs of dependency attestation servers whose reports are fetched,
 # verified, and included in this server's response. HTTPS endpoints
-# skip TLS verification (attestation proves certificate binding);
-# HTTP endpoints must be proxied through a local mTLS-enabling proxy.
+# are verified against the private CA bundle (mTLS); HTTP endpoints
+# must be proxied through a local mTLS-enabling proxy.
 endpoints = []
 
 [tls.public]
@@ -43,3 +43,4 @@ key_path  = ""
 [tls.private]
 cert_path = ""
 key_path  = ""
+ca_path   = ""  # required; PEM CA bundle — all private certs in the dependency chain must be issued by this CA

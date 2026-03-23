@@ -7,9 +7,13 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"math/big"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -62,6 +66,14 @@ func TestValidateTLSConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "public only without private is rejected",
+			cfg: Config{
+				PublicTLSCertPath: "/tmp/certs/cert.pem",
+				PublicTLSKeyPath:  "/tmp/certs/key.pem",
+			},
+			wantErr: true,
+		},
+		{
 			name: "public cert only, no key",
 			cfg: Config{
 				PublicTLSCertPath: "/tmp/certs/cert.pem",
@@ -76,36 +88,55 @@ func TestValidateTLSConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "valid public pair same dir",
+			name: "private cert only, no key",
 			cfg: Config{
-				PublicTLSCertPath: "/tmp/certs/cert.pem",
-				PublicTLSKeyPath:  "/tmp/certs/key.pem",
+				PrivateTLSCertPath: "/tmp/private/cert.pem",
 			},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name: "valid private pair same dir",
+			name: "private key only, no cert",
+			cfg: Config{
+				PrivateTLSKeyPath: "/tmp/private/key.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "private pair without CA is rejected",
 			cfg: Config{
 				PrivateTLSCertPath: "/tmp/private/cert.pem",
 				PrivateTLSKeyPath:  "/tmp/private/key.pem",
 			},
+			wantErr: true,
+		},
+		{
+			name: "valid private pair with CA same dir",
+			cfg: Config{
+				PrivateTLSCertPath: "/tmp/private/cert.pem",
+				PrivateTLSKeyPath:  "/tmp/private/key.pem",
+				PrivateTLSCAPath:   "/tmp/private/ca.pem",
+			},
 			wantErr: false,
 		},
 		{
-			name: "both valid pairs",
+			name: "both valid pairs with CA",
 			cfg: Config{
 				PublicTLSCertPath:  "/tmp/public/cert.pem",
 				PublicTLSKeyPath:   "/tmp/public/key.pem",
 				PrivateTLSCertPath: "/tmp/private/cert.pem",
 				PrivateTLSKeyPath:  "/tmp/private/key.pem",
+				PrivateTLSCAPath:   "/tmp/private/ca.pem",
 			},
 			wantErr: false,
 		},
 		{
 			name: "public cert and key in different dirs",
 			cfg: Config{
-				PublicTLSCertPath: "/tmp/certs/cert.pem",
-				PublicTLSKeyPath:  "/tmp/keys/key.pem",
+				PublicTLSCertPath:  "/tmp/certs/cert.pem",
+				PublicTLSKeyPath:   "/tmp/keys/key.pem",
+				PrivateTLSCertPath: "/tmp/private/cert.pem",
+				PrivateTLSKeyPath:  "/tmp/private/key.pem",
+				PrivateTLSCAPath:   "/tmp/private/ca.pem",
 			},
 			wantErr: true,
 		},
@@ -114,6 +145,16 @@ func TestValidateTLSConfig(t *testing.T) {
 			cfg: Config{
 				PrivateTLSCertPath: "/tmp/certs/cert.pem",
 				PrivateTLSKeyPath:  "/tmp/keys/key.pem",
+				PrivateTLSCAPath:   "/tmp/certs/ca.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "private CA in different dir from cert",
+			cfg: Config{
+				PrivateTLSCertPath: "/tmp/private/cert.pem",
+				PrivateTLSKeyPath:  "/tmp/private/key.pem",
+				PrivateTLSCAPath:   "/tmp/other/ca.pem",
 			},
 			wantErr: true,
 		},
@@ -266,5 +307,340 @@ func TestJoinSANs(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// generateTestCA creates a self-signed CA certificate and returns the CA
+// cert, key, and a PEM-encoded bundle suitable for loadCABundle.
+func generateTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(100),
+		Subject:               pkix.Name{CommonName: "Test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return caCert, key
+}
+
+// generateSignedCertECDSA creates an ECDSA leaf certificate signed by the given CA.
+func generateSignedCertECDSA(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey) tls.Certificate {
+	t.Helper()
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(200),
+		Subject:      pkix.Name{CommonName: "Test Leaf"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, ca, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{derBytes}, PrivateKey: leafKey}
+}
+
+// writeCABundle writes a CA certificate as PEM to a temp file and returns the path.
+func writeCABundle(t *testing.T, dir string, caCert *x509.Certificate) string {
+	t.Helper()
+	path := filepath.Join(dir, "ca.pem")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadCABundle(t *testing.T) {
+	caCert, _ := generateTestCA(t)
+	dir := t.TempDir()
+	caPath := writeCABundle(t, dir, caCert)
+
+	bundle, err := loadCABundle(caPath)
+	if err != nil {
+		t.Fatalf("loadCABundle() error: %v", err)
+	}
+	if bundle == nil {
+		t.Fatal("expected non-nil bundle")
+	}
+}
+
+func TestLoadCABundle_NoPEMCerts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.pem")
+	if err := os.WriteFile(path, []byte("not a PEM file\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadCABundle(path)
+	if err == nil {
+		t.Fatal("expected error for file with no PEM certs")
+	}
+}
+
+func TestLoadCABundle_FileNotFound(t *testing.T) {
+	_, err := loadCABundle("/nonexistent/ca.pem")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+}
+
+func TestVerifyCertAgainstCA_Valid(t *testing.T) {
+	caCert, caKey := generateTestCA(t)
+	cert := generateSignedCertECDSA(t, caCert, caKey)
+
+	bundle := &caBundle{
+		roots:         x509.NewCertPool(),
+		intermediates: x509.NewCertPool(),
+	}
+	bundle.roots.AddCert(caCert)
+
+	if err := verifyCertAgainstCA(&cert, bundle); err != nil {
+		t.Fatalf("verifyCertAgainstCA() error: %v", err)
+	}
+}
+
+func TestVerifyCertAgainstCA_WrongCA(t *testing.T) {
+	caCert, caKey := generateTestCA(t)
+	cert := generateSignedCertECDSA(t, caCert, caKey)
+
+	// Create a different CA that did NOT sign the cert.
+	otherCA, _ := generateTestCA(t)
+	bundle := &caBundle{
+		roots:         x509.NewCertPool(),
+		intermediates: x509.NewCertPool(),
+	}
+	bundle.roots.AddCert(otherCA)
+
+	err := verifyCertAgainstCA(&cert, bundle)
+	if err == nil {
+		t.Fatal("expected error for cert signed by different CA")
+	}
+}
+
+func TestVerifyCertAgainstCA_SelfSigned(t *testing.T) {
+	// A self-signed cert that's not in the CA pool should fail.
+	cert := generateTestCertECDSA(t)
+
+	caCert, _ := generateTestCA(t)
+	bundle := &caBundle{
+		roots:         x509.NewCertPool(),
+		intermediates: x509.NewCertPool(),
+	}
+	bundle.roots.AddCert(caCert)
+
+	err := verifyCertAgainstCA(&cert, bundle)
+	if err == nil {
+		t.Fatal("expected error for self-signed cert not in CA pool")
+	}
+}
+
+// generateTestIntermediateCA creates an intermediate CA cert signed by the given parent.
+func generateTestIntermediateCA(t *testing.T, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, cn string) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(300),
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert, key
+}
+
+func TestVerifyCertAgainstCA_IntermediateChainInBundle(t *testing.T) {
+	// root -> intermediate1 -> intermediate2 -> leaf
+	// All CAs in the bundle, leaf only in the TLS cert file.
+	rootCert, rootKey := generateTestCA(t)
+	inter1Cert, inter1Key := generateTestIntermediateCA(t, rootCert, rootKey, "Intermediate 1")
+	inter2Cert, inter2Key := generateTestIntermediateCA(t, inter1Cert, inter1Key, "Intermediate 2")
+	leaf := generateSignedCertECDSA(t, inter2Cert, inter2Key)
+
+	// Write all three CAs into a single bundle file.
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "ca-bundle.pem")
+	f, err := os.Create(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*x509.Certificate{rootCert, inter1Cert, inter2Cert} {
+		if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.Close()
+
+	bundle, err := loadCABundle(bundlePath)
+	if err != nil {
+		t.Fatalf("loadCABundle() error: %v", err)
+	}
+
+	if err := verifyCertAgainstCA(&leaf, bundle); err != nil {
+		t.Fatalf("verifyCertAgainstCA() should succeed with full chain in bundle: %v", err)
+	}
+}
+
+func TestVerifyCertAgainstCA_IntermediateChainPartialBundle(t *testing.T) {
+	// root -> intermediate1 -> intermediate2 -> leaf
+	// Only root and intermediate1 in bundle (missing intermediate2).
+	// Leaf cert file has no intermediates. Should fail.
+	rootCert, rootKey := generateTestCA(t)
+	inter1Cert, inter1Key := generateTestIntermediateCA(t, rootCert, rootKey, "Intermediate 1")
+	inter2Cert, inter2Key := generateTestIntermediateCA(t, inter1Cert, inter1Key, "Intermediate 2")
+	leaf := generateSignedCertECDSA(t, inter2Cert, inter2Key)
+
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "ca-bundle.pem")
+	f, err := os.Create(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only root + intermediate1, missing intermediate2.
+	for _, c := range []*x509.Certificate{rootCert, inter1Cert} {
+		if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.Close()
+
+	bundle, err := loadCABundle(bundlePath)
+	if err != nil {
+		t.Fatalf("loadCABundle() error: %v", err)
+	}
+
+	err = verifyCertAgainstCA(&leaf, bundle)
+	if err == nil {
+		t.Fatal("expected error when intermediate2 is missing from bundle")
+	}
+}
+
+func TestVerifyCertAgainstCA_IntermediateInCertFile(t *testing.T) {
+	// root -> intermediate -> leaf
+	// Root in bundle, intermediate bundled in the TLS cert file.
+	rootCert, rootKey := generateTestCA(t)
+	interCert, interKey := generateTestIntermediateCA(t, rootCert, rootKey, "Intermediate")
+	leafCert := generateSignedCertECDSA(t, interCert, interKey)
+
+	// Bundle the intermediate in the cert file (cert.Certificate[1]).
+	leafCert.Certificate = append(leafCert.Certificate, interCert.Raw)
+
+	bundle := &caBundle{
+		roots:         x509.NewCertPool(),
+		intermediates: x509.NewCertPool(),
+	}
+	bundle.roots.AddCert(rootCert)
+
+	if err := verifyCertAgainstCA(&leafCert, bundle); err != nil {
+		t.Fatalf("verifyCertAgainstCA() should succeed with intermediate in cert file: %v", err)
+	}
+}
+
+func TestVerifyCertAgainstCA_FederationBundle(t *testing.T) {
+	// Federation bundle with two independent trust chains:
+	//   RootA -> InterA1 -> InterA2 -> leafA
+	//   RootB -> InterB1
+	// All CAs in a single bundle. Leaf signed by InterA2.
+	rootA, rootAKey := generateTestCA(t)
+	interA1, interA1Key := generateTestIntermediateCA(t, rootA, rootAKey, "Inter A1")
+	interA2, interA2Key := generateTestIntermediateCA(t, interA1, interA1Key, "Inter A2")
+	leaf := generateSignedCertECDSA(t, interA2, interA2Key)
+
+	rootB, rootBKey := generateTestCA(t)
+	interB1, _ := generateTestIntermediateCA(t, rootB, rootBKey, "Inter B1")
+
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "federation.pem")
+	f, err := os.Create(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*x509.Certificate{rootA, interA1, interA2, rootB, interB1} {
+		if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.Close()
+
+	bundle, err := loadCABundle(bundlePath)
+	if err != nil {
+		t.Fatalf("loadCABundle() error: %v", err)
+	}
+
+	if err := verifyCertAgainstCA(&leaf, bundle); err != nil {
+		t.Fatalf("verifyCertAgainstCA() should succeed with federation bundle: %v", err)
+	}
+}
+
+func TestVerifyCertAgainstCA_FederationBundleWrongChain(t *testing.T) {
+	// Federation bundle with two chains, but leaf is signed by an
+	// intermediate NOT in the bundle.
+	rootA, rootAKey := generateTestCA(t)
+	interA1, _ := generateTestIntermediateCA(t, rootA, rootAKey, "Inter A1")
+
+	rootB, rootBKey := generateTestCA(t)
+	interB1, _ := generateTestIntermediateCA(t, rootB, rootBKey, "Inter B1")
+
+	// Leaf signed by a third, unrelated intermediate.
+	rogue, rogueKey := generateTestCA(t)
+	rogueInter, rogueInterKey := generateTestIntermediateCA(t, rogue, rogueKey, "Rogue Inter")
+	leaf := generateSignedCertECDSA(t, rogueInter, rogueInterKey)
+
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "federation.pem")
+	f, err := os.Create(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*x509.Certificate{rootA, interA1, rootB, interB1} {
+		if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.Close()
+
+	bundle, err := loadCABundle(bundlePath)
+	if err != nil {
+		t.Fatalf("loadCABundle() error: %v", err)
+	}
+
+	err = verifyCertAgainstCA(&leaf, bundle)
+	if err == nil {
+		t.Fatal("expected error for leaf signed by CA not in federation bundle")
 	}
 }

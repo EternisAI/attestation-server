@@ -99,24 +99,23 @@ func (s *Server) fetchDependencies(nonceHex, requestID, attestationPath string) 
 // dependencyHTTPClient builds an HTTP client hardened against slowloris-like
 // attacks and misbehaving peers. It sets timeouts at every phase (dial, TLS
 // handshake, response headers) and an overall request deadline.
+//
+// The client presents the private certificate as the TLS client cert (mTLS)
+// and verifies the dependency's server certificate against the same CA
+// bundle used for the private certificate. All private certificates in the
+// dependency chain must be issued by the same CA — Envoy only populates the
+// XFCC header when the client cert passes CA verification.
+//
+// Plain HTTP endpoints are expected to be reachable only through a local
+// mTLS-enabling proxy (e.g. Envoy, SPIRE Agent) that terminates TLS on the
+// loopback interface.
 func (s *Server) dependencyHTTPClient() *http.Client {
-	// TLS verification is intentionally disabled: the certificates serve
-	// to provide end-to-end encryption whose binding to a specific machine
-	// is proven through hardware-based attestation (the certificate
-	// fingerprints are included in AttestationReportData and covered by
-	// the TEE signature). Proper mTLS verification will replace this once
-	// a SPIFFE/SPIRE-based identity infrastructure is in place.
-	//
-	// Plain HTTP endpoints are expected to be reachable only through a
-	// local mTLS-enabling proxy (e.g. Envoy, SPIRE Agent) that terminates
-	// TLS on the loopback interface.
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: true,
-	}
+	tlsCfg := &tls.Config{}
 
 	s.certs.mu.RLock()
-	if s.certs.private != nil {
-		tlsCfg.Certificates = []tls.Certificate{*s.certs.private.cert}
+	tlsCfg.Certificates = []tls.Certificate{*s.certs.private.cert}
+	if s.certs.privateCA != nil {
+		tlsCfg.RootCAs = s.certs.privateCA.roots
 	}
 	s.certs.mu.RUnlock()
 
@@ -136,7 +135,8 @@ func (s *Server) dependencyHTTPClient() *http.Client {
 
 // fetchAndVerifyDependency sends a GET request to the dependency endpoint
 // with the nonce header and request ID, parses the response, verifies all
-// evidence entries and nonce binding, and returns the raw response body.
+// evidence entries and nonce binding, and checks that the dependency saw
+// our private certificate as the client cert (end-to-end encryption proof).
 // Returning raw bytes (json.RawMessage) instead of a parsed struct avoids
 // re-marshaling through goccy/go-json, which can crash when serialising
 // values that were decoded into any-typed fields (zero-copy string refs).
@@ -172,19 +172,46 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
-	if err := verifyDependencyReport(&report, nonceHex, time.Now()); err != nil {
+	s.certs.mu.RLock()
+	privFP := s.certs.private.certFingerprint
+	s.certs.mu.RUnlock()
+
+	if err := verifyDependencyReport(&report, nonceHex, privFP, time.Now()); err != nil {
+		if isE2EError(err) {
+			s.logger.Error("dependency end-to-end encryption verification failed",
+				"endpoint", endpoint.String(), "request_id", requestID, "error", err)
+			return nil, fmt.Errorf("dependency end-to-end encryption verification failed")
+		}
 		return nil, fmt.Errorf("verification failed: %w", err)
 	}
 
 	return json.RawMessage(body), nil
 }
 
+// errE2E is a sentinel type for end-to-end encryption verification failures.
+// The caller uses isE2EError to distinguish these from cryptographic
+// verification failures so it can log a descriptive message while returning
+// an opaque error to the user.
+type errE2E struct{ msg string }
+
+func (e *errE2E) Error() string { return e.msg }
+
+func isE2EError(err error) bool {
+	var e *errE2E
+	return errors.As(err, &e)
+}
+
 // verifyDependencyReport verifies that a dependency's attestation report
-// has a matching nonce and that all evidence entries are cryptographically
-// valid. It handles NitroTPM→SEV-SNP chaining the same way the handler does.
-// The data JSON is compacted before hashing to ensure the digest matches
-// regardless of whitespace formatting.
-func verifyDependencyReport(report *AttestationReport, expectedNonce string, now time.Time) error {
+// has a matching nonce, that all evidence entries are cryptographically
+// valid, and that the dependency acknowledged our client certificate
+// (proving end-to-end encryption). It handles NitroTPM→SEV-SNP chaining
+// the same way the handler does. The data JSON is compacted before hashing
+// to ensure the digest matches regardless of whitespace formatting.
+//
+// clientCertFP is the SHA-256 hex fingerprint of the private certificate
+// we presented as the TLS client cert when connecting to the dependency.
+// The dependency must include this in data.tls.client.certificate.
+func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time) error {
 	if len(report.Evidence) == 0 {
 		return fmt.Errorf("no evidence in report")
 	}
@@ -195,6 +222,18 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce string, now
 	}
 	if reportData.Nonce != expectedNonce {
 		return fmt.Errorf("nonce mismatch")
+	}
+
+	// Verify that the dependency recorded our client certificate fingerprint.
+	// Without this, the connection may have been intercepted by a proxy that
+	// strips or replaces the client cert, breaking the end-to-end encryption
+	// guarantee bound to the TEE attestation.
+	if reportData.TLS == nil || reportData.TLS.Client == nil || reportData.TLS.Client.CertificateFingerprint == "" {
+		return &errE2E{msg: "dependency response missing client certificate fingerprint in attestation data"}
+	}
+	if reportData.TLS.Client.CertificateFingerprint != clientCertFP {
+		return &errE2E{msg: fmt.Sprintf("client certificate fingerprint mismatch: expected %s, got %s",
+			clientCertFP, reportData.TLS.Client.CertificateFingerprint)}
 	}
 
 	// Compact the data JSON before hashing. The attestation handler

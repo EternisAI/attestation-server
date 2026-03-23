@@ -24,6 +24,7 @@ type Config struct {
 	PublicTLSKeyPath    string
 	PrivateTLSCertPath  string
 	PrivateTLSKeyPath   string
+	PrivateTLSCAPath    string
 	ReportEvidence      EvidenceConfig
 	ReportEnvVars       []string
 	SecureBootEnforce   bool
@@ -91,6 +92,7 @@ func LoadConfig() (*Config, error) {
 		PublicTLSKeyPath:    absPath(viper.GetString("tls.public.key_path")),
 		PrivateTLSCertPath:  absPath(viper.GetString("tls.private.cert_path")),
 		PrivateTLSKeyPath:   absPath(viper.GetString("tls.private.key_path")),
+		PrivateTLSCAPath:    absPath(viper.GetString("tls.private.ca_path")),
 		ReportEvidence:      evidence,
 		ReportEnvVars:       envVars,
 		SecureBootEnforce:   viper.GetBool("secure_boot.enforce"),
