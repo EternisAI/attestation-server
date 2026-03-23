@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"time"
@@ -13,15 +12,9 @@ import (
 	"github.com/google/go-tdx-guest/client"
 	pb "github.com/google/go-tdx-guest/proto/tdx"
 	"github.com/google/go-tdx-guest/verify"
+
+	"github.com/eternisai/attestation-server/pkg/hexbytes"
 )
-
-// HexBytes is a byte slice that serializes to a hex-encoded JSON string
-// instead of the default base64.
-type HexBytes []byte
-
-func (h HexBytes) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + hex.EncodeToString(h) + `"`), nil
-}
 
 // intelSGXRootCAPEM is the Intel SGX Root CA certificate used to verify the
 // PCK certificate chain in TDX attestation quotes.
@@ -161,23 +154,23 @@ func VerifyEvidence(rawQuote []byte, expectedReportData [64]byte, now time.Time)
 // AttestationData contains select fields from a verified TDX attestation
 // quote, included in the API response for convenience.
 type AttestationData struct {
-	Version        uint32     `json:"version"`
-	TeeType        uint32     `json:"tee_type"`
-	QeSvn          HexBytes   `json:"qe_svn"`
-	PceSvn         HexBytes   `json:"pce_svn"`
-	QeVendorID     HexBytes   `json:"qe_vendor_id"`
-	TeeTcbSvn      HexBytes   `json:"tee_tcb_svn"`
-	MrSeam         HexBytes   `json:"mr_seam"`
-	MrSignerSeam   HexBytes   `json:"mr_signer_seam"`
-	SeamAttributes HexBytes   `json:"seam_attributes"`
-	TdAttributes   HexBytes   `json:"td_attributes"`
-	Xfam           HexBytes   `json:"xfam"`
-	MrTd           HexBytes   `json:"mr_td"`
-	MrConfigID     HexBytes   `json:"mr_config_id"`
-	MrOwner        HexBytes   `json:"mr_owner"`
-	MrOwnerConfig  HexBytes   `json:"mr_owner_config"`
-	Rtmrs          []HexBytes `json:"rtmrs"`
-	ReportData     HexBytes   `json:"report_data"`
+	Version        uint32           `json:"version"`
+	TeeType        uint32           `json:"tee_type"`
+	QeSvn          hexbytes.Bytes   `json:"qe_svn"`
+	PceSvn         hexbytes.Bytes   `json:"pce_svn"`
+	QeVendorID     hexbytes.Bytes   `json:"qe_vendor_id"`
+	TeeTcbSvn      hexbytes.Bytes   `json:"tee_tcb_svn"`
+	MrSeam         hexbytes.Bytes   `json:"mr_seam"`
+	MrSignerSeam   hexbytes.Bytes   `json:"mr_signer_seam"`
+	SeamAttributes hexbytes.Bytes   `json:"seam_attributes"`
+	TdAttributes   hexbytes.Bytes   `json:"td_attributes"`
+	Xfam           hexbytes.Bytes   `json:"xfam"`
+	MrTd           hexbytes.Bytes   `json:"mr_td"`
+	MrConfigID     hexbytes.Bytes   `json:"mr_config_id"`
+	MrOwner        hexbytes.Bytes   `json:"mr_owner"`
+	MrOwnerConfig  hexbytes.Bytes   `json:"mr_owner_config"`
+	Rtmrs          []hexbytes.Bytes `json:"rtmrs"`
+	ReportData     hexbytes.Bytes   `json:"report_data"`
 }
 
 // NewAttestationData extracts the select API response fields from a verified
@@ -186,28 +179,28 @@ func NewAttestationData(quote *pb.QuoteV4) *AttestationData {
 	h := quote.GetHeader()
 	body := quote.GetTdQuoteBody()
 
-	rtmrs := make([]HexBytes, len(body.GetRtmrs()))
+	rtmrs := make([]hexbytes.Bytes, len(body.GetRtmrs()))
 	for i, r := range body.GetRtmrs() {
-		rtmrs[i] = HexBytes(r)
+		rtmrs[i] = hexbytes.Bytes(r)
 	}
 
 	return &AttestationData{
 		Version:        h.GetVersion(),
 		TeeType:        h.GetTeeType(),
-		QeSvn:          HexBytes(h.GetQeSvn()),
-		PceSvn:         HexBytes(h.GetPceSvn()),
-		QeVendorID:     HexBytes(h.GetQeVendorId()),
-		TeeTcbSvn:      HexBytes(body.GetTeeTcbSvn()),
-		MrSeam:         HexBytes(body.GetMrSeam()),
-		MrSignerSeam:   HexBytes(body.GetMrSignerSeam()),
-		SeamAttributes: HexBytes(body.GetSeamAttributes()),
-		TdAttributes:   HexBytes(body.GetTdAttributes()),
-		Xfam:           HexBytes(body.GetXfam()),
-		MrTd:           HexBytes(body.GetMrTd()),
-		MrConfigID:     HexBytes(body.GetMrConfigId()),
-		MrOwner:        HexBytes(body.GetMrOwner()),
-		MrOwnerConfig:  HexBytes(body.GetMrOwnerConfig()),
+		QeSvn:          hexbytes.Bytes(h.GetQeSvn()),
+		PceSvn:         hexbytes.Bytes(h.GetPceSvn()),
+		QeVendorID:     hexbytes.Bytes(h.GetQeVendorId()),
+		TeeTcbSvn:      hexbytes.Bytes(body.GetTeeTcbSvn()),
+		MrSeam:         hexbytes.Bytes(body.GetMrSeam()),
+		MrSignerSeam:   hexbytes.Bytes(body.GetMrSignerSeam()),
+		SeamAttributes: hexbytes.Bytes(body.GetSeamAttributes()),
+		TdAttributes:   hexbytes.Bytes(body.GetTdAttributes()),
+		Xfam:           hexbytes.Bytes(body.GetXfam()),
+		MrTd:           hexbytes.Bytes(body.GetMrTd()),
+		MrConfigID:     hexbytes.Bytes(body.GetMrConfigId()),
+		MrOwner:        hexbytes.Bytes(body.GetMrOwner()),
+		MrOwnerConfig:  hexbytes.Bytes(body.GetMrOwnerConfig()),
 		Rtmrs:          rtmrs,
-		ReportData:     HexBytes(body.GetReportData()),
+		ReportData:     hexbytes.Bytes(body.GetReportData()),
 	}
 }

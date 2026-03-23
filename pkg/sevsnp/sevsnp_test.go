@@ -11,30 +11,9 @@ import (
 	"time"
 
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
-)
 
-func TestHexBytes_MarshalJSON(t *testing.T) {
-	tests := []struct {
-		name string
-		h    HexBytes
-		want string
-	}{
-		{name: "nil", h: HexBytes(nil), want: `""`},
-		{name: "empty", h: HexBytes{}, want: `""`},
-		{name: "two bytes", h: HexBytes{0xde, 0xad}, want: `"dead"`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := json.Marshal(tt.h)
-			if err != nil {
-				t.Fatalf("MarshalJSON() error: %v", err)
-			}
-			if string(got) != tt.want {
-				t.Errorf("MarshalJSON() = %s, want %s", got, tt.want)
-			}
-		})
-	}
-}
+	"github.com/eternisai/attestation-server/pkg/hexbytes"
+)
 
 func TestDecomposeTCB(t *testing.T) {
 	tests := []struct {
@@ -130,10 +109,10 @@ func TestNewAttestationData(t *testing.T) {
 		})
 	}
 
-	// HexBytes fields
+	// hexbytes.Bytes fields
 	hexTests := []struct {
 		name string
-		got  HexBytes
+		got  hexbytes.Bytes
 		want []byte
 	}{
 		{"FamilyID", ad.FamilyID, bytes.Repeat([]byte{0xAA}, 16)},

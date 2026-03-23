@@ -5,22 +5,15 @@ import (
 	"crypto/ecdsa"
 	"crypto/sha512"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/eternisai/attestation-server/pkg/hexbytes"
 )
-
-// HexBytes is a byte slice that serializes to a hex-encoded JSON string
-// instead of the default base64.
-type HexBytes []byte
-
-func (h HexBytes) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + hex.EncodeToString(h) + `"`), nil
-}
 
 // awsNitroRootCAPEM is the AWS Nitro Enclaves root certificate (Root-G1)
 // downloaded from https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
@@ -75,12 +68,12 @@ type AttestationDocument struct {
 // document, included in the API response for convenience. Exactly one of PCRs
 // or NitroTPMPCRs is populated depending on the evidence type.
 type AttestationData struct {
-	Module       string           `json:"module"`
-	Timestamp    time.Time        `json:"timestamp"`
-	Digest       string           `json:"digest"`
-	PCRs         map[int]HexBytes `json:"pcrs,omitempty"`
-	NitroTPMPCRs map[int]HexBytes `json:"nitrotpm_pcrs,omitempty"`
-	Nonce        HexBytes         `json:"nonce,omitempty"`
+	Module       string                 `json:"module"`
+	Timestamp    time.Time              `json:"timestamp"`
+	Digest       string                 `json:"digest"`
+	PCRs         map[int]hexbytes.Bytes `json:"pcrs,omitempty"`
+	NitroTPMPCRs map[int]hexbytes.Bytes `json:"nitrotpm_pcrs,omitempty"`
+	Nonce        hexbytes.Bytes         `json:"nonce,omitempty"`
 }
 
 // NewAttestationData extracts the select API response fields from a verified
@@ -92,17 +85,17 @@ func NewAttestationData(doc *AttestationDocument) *AttestationData {
 		Digest:       doc.Digest,
 		PCRs:         toHexBytesMap(doc.PCRs),
 		NitroTPMPCRs: toHexBytesMap(doc.NitroTPMPCRs),
-		Nonce:        HexBytes(doc.Nonce),
+		Nonce:        hexbytes.Bytes(doc.Nonce),
 	}
 }
 
-func toHexBytesMap(m map[int][]byte) map[int]HexBytes {
+func toHexBytesMap(m map[int][]byte) map[int]hexbytes.Bytes {
 	if m == nil {
 		return nil
 	}
-	out := make(map[int]HexBytes, len(m))
+	out := make(map[int]hexbytes.Bytes, len(m))
 	for k, v := range m {
-		out[k] = HexBytes(v)
+		out[k] = hexbytes.Bytes(v)
 	}
 	return out
 }

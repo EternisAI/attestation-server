@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,15 +17,9 @@ import (
 	"github.com/google/go-sev-guest/kds"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
 	"github.com/google/go-sev-guest/verify/trust"
+
+	"github.com/eternisai/attestation-server/pkg/hexbytes"
 )
-
-// HexBytes is a byte slice that serializes to a hex-encoded JSON string
-// instead of the default base64.
-type HexBytes []byte
-
-func (h HexBytes) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + hex.EncodeToString(h) + `"`), nil
-}
 
 // Device manages the SEV-SNP guest device for attestation.
 // All device access is serialized by an internal mutex because the underlying
@@ -414,28 +407,28 @@ func reportToProto(raw []byte) (report *spb.Report, origPolicy uint64, err error
 // AttestationData contains select fields from a verified SEV-SNP
 // attestation report, included in the API response for convenience.
 type AttestationData struct {
-	Version          uint32   `json:"version"`
-	GuestSvn         uint32   `json:"guest_svn"`
-	Policy           uint64   `json:"policy"`
-	FamilyID         HexBytes `json:"family_id"`
-	ImageID          HexBytes `json:"image_id"`
-	VMPL             uint32   `json:"vmpl"`
-	ReportData       HexBytes `json:"report_data"`
-	Measurement      HexBytes `json:"measurement"`
-	HostData         HexBytes `json:"host_data"`
-	IDKeyDigest      HexBytes `json:"id_key_digest"`
-	AuthorKeyDigest  HexBytes `json:"author_key_digest"`
-	ReportID         HexBytes `json:"report_id"`
-	ReportIDMA       HexBytes `json:"report_id_ma"`
-	ChipID           HexBytes `json:"chip_id"`
-	CurrentTCB       TCBParts `json:"current_tcb"`
-	ReportedTCB      TCBParts `json:"reported_tcb"`
-	CommittedTCB     TCBParts `json:"committed_tcb"`
-	LaunchTCB        TCBParts `json:"launch_tcb"`
-	CurrentVersion   Firmware `json:"current_version"`
-	CommittedVersion Firmware `json:"committed_version"`
-	PlatformInfo     uint64   `json:"platform_info"`
-	SignerInfo       uint32   `json:"signer_info"`
+	Version          uint32         `json:"version"`
+	GuestSvn         uint32         `json:"guest_svn"`
+	Policy           uint64         `json:"policy"`
+	FamilyID         hexbytes.Bytes `json:"family_id"`
+	ImageID          hexbytes.Bytes `json:"image_id"`
+	VMPL             uint32         `json:"vmpl"`
+	ReportData       hexbytes.Bytes `json:"report_data"`
+	Measurement      hexbytes.Bytes `json:"measurement"`
+	HostData         hexbytes.Bytes `json:"host_data"`
+	IDKeyDigest      hexbytes.Bytes `json:"id_key_digest"`
+	AuthorKeyDigest  hexbytes.Bytes `json:"author_key_digest"`
+	ReportID         hexbytes.Bytes `json:"report_id"`
+	ReportIDMA       hexbytes.Bytes `json:"report_id_ma"`
+	ChipID           hexbytes.Bytes `json:"chip_id"`
+	CurrentTCB       TCBParts       `json:"current_tcb"`
+	ReportedTCB      TCBParts       `json:"reported_tcb"`
+	CommittedTCB     TCBParts       `json:"committed_tcb"`
+	LaunchTCB        TCBParts       `json:"launch_tcb"`
+	CurrentVersion   Firmware       `json:"current_version"`
+	CommittedVersion Firmware       `json:"committed_version"`
+	PlatformInfo     uint64         `json:"platform_info"`
+	SignerInfo       uint32         `json:"signer_info"`
 }
 
 // TCBParts holds the decomposed components of a 64-bit TCB version.
@@ -460,17 +453,17 @@ func NewAttestationData(report *spb.Report) *AttestationData {
 		Version:         report.Version,
 		GuestSvn:        report.GuestSvn,
 		Policy:          report.Policy,
-		FamilyID:        HexBytes(report.FamilyId),
-		ImageID:         HexBytes(report.ImageId),
+		FamilyID:        hexbytes.Bytes(report.FamilyId),
+		ImageID:         hexbytes.Bytes(report.ImageId),
 		VMPL:            report.Vmpl,
-		ReportData:      HexBytes(report.ReportData),
-		Measurement:     HexBytes(report.Measurement),
-		HostData:        HexBytes(report.HostData),
-		IDKeyDigest:     HexBytes(report.IdKeyDigest),
-		AuthorKeyDigest: HexBytes(report.AuthorKeyDigest),
-		ReportID:        HexBytes(report.ReportId),
-		ReportIDMA:      HexBytes(report.ReportIdMa),
-		ChipID:          HexBytes(report.ChipId),
+		ReportData:      hexbytes.Bytes(report.ReportData),
+		Measurement:     hexbytes.Bytes(report.Measurement),
+		HostData:        hexbytes.Bytes(report.HostData),
+		IDKeyDigest:     hexbytes.Bytes(report.IdKeyDigest),
+		AuthorKeyDigest: hexbytes.Bytes(report.AuthorKeyDigest),
+		ReportID:        hexbytes.Bytes(report.ReportId),
+		ReportIDMA:      hexbytes.Bytes(report.ReportIdMa),
+		ChipID:          hexbytes.Bytes(report.ChipId),
 		CurrentTCB:      decomposeTCB(report.CurrentTcb),
 		ReportedTCB:     decomposeTCB(report.ReportedTcb),
 		CommittedTCB:    decomposeTCB(report.CommittedTcb),

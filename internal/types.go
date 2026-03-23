@@ -3,7 +3,7 @@ package app
 import (
 	"github.com/goccy/go-json"
 
-	"github.com/eternisai/attestation-server/pkg/tpm"
+	"github.com/eternisai/attestation-server/pkg/hexbytes"
 )
 
 // Fields sourced from: https://github.com/sigstore/fulcio/blob/v1.8.5/pkg/certificate/extensions.go#L60
@@ -93,8 +93,8 @@ type AttestationReportData struct {
 // TPMData holds TPM PCR values along with the hash algorithm used.
 // The structure mirrors the Nitro attestation document's PCR format.
 type TPMData struct {
-	Digest string               `json:"digest"`
-	PCRs   map[int]tpm.HexBytes `json:"pcrs"`
+	Digest string                 `json:"digest"`
+	PCRs   map[int]hexbytes.Bytes `json:"pcrs"`
 }
 
 // TLSReportData groups TLS certificate fingerprints for the server's public

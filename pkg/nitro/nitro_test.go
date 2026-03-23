@@ -9,47 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/eternisai/attestation-server/pkg/hexbytes"
 )
-
-func TestHexBytes_MarshalJSON(t *testing.T) {
-	tests := []struct {
-		name string
-		h    HexBytes
-		want string
-	}{
-		{name: "nil", h: HexBytes(nil), want: `""`},
-		{name: "empty", h: HexBytes{}, want: `""`},
-		{name: "deadbeef", h: HexBytes{0xde, 0xad, 0xbe, 0xef}, want: `"deadbeef"`},
-		{name: "single zero byte", h: HexBytes{0x00}, want: `"00"`},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.h.MarshalJSON()
-			if err != nil {
-				t.Fatalf("MarshalJSON() returned error: %v", err)
-			}
-			if string(got) != tt.want {
-				t.Errorf("MarshalJSON() = %s, want %s", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestHexBytes_MarshalJSON_inStruct(t *testing.T) {
-	type wrapper struct {
-		Data HexBytes `json:"data"`
-	}
-	w := wrapper{Data: HexBytes{0xca, 0xfe}}
-	got, err := json.Marshal(w)
-	if err != nil {
-		t.Fatalf("json.Marshal() returned error: %v", err)
-	}
-	want := `{"data":"cafe"}`
-	if string(got) != want {
-		t.Errorf("json.Marshal() = %s, want %s", got, want)
-	}
-}
 
 func TestToHexBytesMap(t *testing.T) {
 	tests := []struct {
@@ -57,7 +19,7 @@ func TestToHexBytesMap(t *testing.T) {
 		input   map[int][]byte
 		wantNil bool
 		wantLen int
-		check   map[int]HexBytes // entries to verify, nil means skip
+		check   map[int]hexbytes.Bytes // entries to verify, nil means skip
 	}{
 		{
 			name:    "nil map returns nil",
@@ -75,14 +37,14 @@ func TestToHexBytesMap(t *testing.T) {
 			input:   map[int][]byte{0: {0xab}},
 			wantNil: false,
 			wantLen: 1,
-			check:   map[int]HexBytes{0: {0xab}},
+			check:   map[int]hexbytes.Bytes{0: {0xab}},
 		},
 		{
 			name:    "multiple entries",
 			input:   map[int][]byte{0: {0x01, 0x02}, 1: {0x03}},
 			wantNil: false,
 			wantLen: 2,
-			check:   map[int]HexBytes{0: {0x01, 0x02}, 1: {0x03}},
+			check:   map[int]hexbytes.Bytes{0: {0x01, 0x02}, 1: {0x03}},
 		},
 	}
 

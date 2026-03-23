@@ -13,30 +13,6 @@ import (
 	pb "github.com/google/go-tdx-guest/proto/tdx"
 )
 
-func TestHexBytes_MarshalJSON(t *testing.T) {
-	tests := []struct {
-		name string
-		h    HexBytes
-		want string
-	}{
-		{name: "nil", h: HexBytes(nil), want: `""`},
-		{name: "empty", h: HexBytes{}, want: `""`},
-		{name: "two bytes", h: HexBytes{0xde, 0xad}, want: `"dead"`},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.h.MarshalJSON()
-			if err != nil {
-				t.Fatalf("MarshalJSON() returned error: %v", err)
-			}
-			if string(got) != tt.want {
-				t.Errorf("MarshalJSON() = %s, want %s", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestNewAttestationData(t *testing.T) {
 	t.Run("fully populated quote", func(t *testing.T) {
 		qeSvn := []byte{0x01, 0x00}
