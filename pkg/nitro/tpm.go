@@ -2,11 +2,13 @@ package nitro
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/hf/nsm/request"
@@ -73,10 +75,28 @@ func (n *TPM) Close() error {
 	return n.dev.Close()
 }
 
-// Attest obtains an NSM attestation document via the NitroTPM vendor command.
-// The nonce is included in the CBOR-encoded NSM attestation request sent through
-// the TPM NV buffer.
-func (n *TPM) Attest(nonce []byte) ([]byte, error) {
+// Attest obtains an NSM attestation document via the NitroTPM vendor command,
+// verifies the COSE signature and certificate chain, and returns both the raw
+// blob and the parsed document. Verification uses the same VerifyEvidence
+// function that external verifiers would use, catching corrupted device
+// output before it reaches callers.
+func (n *TPM) Attest(nonce []byte) ([]byte, *AttestationDocument, error) {
+	blob, err := n.GetEvidence(nonce)
+	if err != nil {
+		return nil, nil, err
+	}
+	doc, err := VerifyEvidence(blob, nonce, time.Now())
+	if err != nil {
+		return nil, nil, err
+	}
+	return blob, doc, nil
+}
+
+// GetEvidence obtains the raw NSM attestation document (COSE_Sign1 blob) via
+// the NitroTPM vendor command, without performing verification. Use
+// VerifyEvidence to verify the returned blob separately, or use Attest
+// for combined retrieval and verification.
+func (n *TPM) GetEvidence(nonce []byte) ([]byte, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -117,6 +137,18 @@ func (n *TPM) Attest(nonce []byte) ([]byte, error) {
 		return nil, fmt.Errorf("nsm response missing attestation document")
 	}
 	return resp.Attestation.Document, nil
+}
+
+// SelfAttest performs an attestation with a random nonce and verifies the
+// result. It should be called once at startup to catch environment issues
+// early (e.g. tampered firmware, broken device).
+func (n *TPM) SelfAttest() error {
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("generating random nonce: %w", err)
+	}
+	_, _, err := n.Attest(nonce)
+	return err
 }
 
 // nvDefineSpace allocates an NV index for the NSM request/response buffer.

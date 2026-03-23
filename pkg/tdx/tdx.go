@@ -2,11 +2,11 @@ package tdx
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/go-tdx-guest/abi"
@@ -56,9 +56,10 @@ var intelSGXRootPool = func() *x509.CertPool {
 }()
 
 // Device manages the TDX quote provider for attestation.
-// All access is serialized by an internal mutex for safe concurrent use.
+// No mutex is needed because the ConfigFS-based QuoteProvider is stateless
+// (empty struct) and creates an isolated temporary directory per request.
+// The kernel's ConfigFS subsystem handles concurrent access internally.
 type Device struct {
-	mu sync.Mutex
 	qp client.QuoteProvider
 }
 
@@ -85,15 +86,12 @@ func (t *Device) Close() error {
 // Attest requests a TDX attestation quote incorporating the given report data.
 // It returns the raw quote bytes and the verified parsed QuoteV4.
 func (t *Device) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	rawQuote, err := client.GetRawQuote(t.qp, reportData)
+	rawQuote, err := t.GetEvidence(reportData)
 	if err != nil {
-		return nil, nil, fmt.Errorf("tdx quote request failed: %w", err)
+		return nil, nil, err
 	}
 
-	quote, err := VerifyQuote(rawQuote, reportData, time.Now())
+	quote, err := VerifyEvidence(rawQuote, reportData, time.Now())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -101,11 +99,35 @@ func (t *Device) Attest(reportData [64]byte) ([]byte, *pb.QuoteV4, error) {
 	return rawQuote, quote, nil
 }
 
-// VerifyQuote parses the raw quote, verifies the ECDSA-P256 signature and
+// GetEvidence retrieves the raw TDX attestation quote incorporating the given
+// report data, without performing verification. Use VerifyEvidence to verify
+// the returned quote separately, or use Attest for combined retrieval and
+// verification.
+func (t *Device) GetEvidence(reportData [64]byte) ([]byte, error) {
+	rawQuote, err := client.GetRawQuote(t.qp, reportData)
+	if err != nil {
+		return nil, fmt.Errorf("tdx quote request failed: %w", err)
+	}
+	return rawQuote, nil
+}
+
+// SelfAttest performs an attestation with random report data and verifies the
+// result. It should be called once at startup to catch environment issues
+// early (e.g. missing ConfigFS support, broken QE).
+func (t *Device) SelfAttest() error {
+	var reportData [64]byte
+	if _, err := rand.Read(reportData[:]); err != nil {
+		return fmt.Errorf("generating random report data: %w", err)
+	}
+	_, _, err := t.Attest(reportData)
+	return err
+}
+
+// VerifyEvidence parses the raw quote, verifies the ECDSA-P256 signature and
 // PCK certificate chain against the Intel SGX Root CA (offline, no collateral
 // fetching or CRL check), and validates that the report data field matches the
 // expected value.
-func VerifyQuote(rawQuote []byte, expectedReportData [64]byte, now time.Time) (*pb.QuoteV4, error) {
+func VerifyEvidence(rawQuote []byte, expectedReportData [64]byte, now time.Time) (*pb.QuoteV4, error) {
 	parsed, err := abi.QuoteToProto(rawQuote)
 	if err != nil {
 		return nil, fmt.Errorf("parsing tdx quote: %w", err)

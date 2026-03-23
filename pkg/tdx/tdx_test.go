@@ -275,7 +275,7 @@ func deriveReportData(t *testing.T, rawData json.RawMessage) [64]byte {
 	return sha512.Sum512(buf.Bytes())
 }
 
-func TestVerifyQuote(t *testing.T) {
+func TestVerifyEvidence(t *testing.T) {
 	f := loadTDXFixture(t, "tdx_attestation.json")
 
 	if len(f.Report.Evidence) == 0 {
@@ -295,9 +295,9 @@ func TestVerifyQuote(t *testing.T) {
 	reportData := deriveReportData(t, f.Report.Data)
 
 	t.Run("valid", func(t *testing.T) {
-		quote, err := VerifyQuote(blob, reportData, now)
+		quote, err := VerifyEvidence(blob, reportData, now)
 		if err != nil {
-			t.Fatalf("VerifyQuote() error: %v", err)
+			t.Fatalf("VerifyEvidence() error: %v", err)
 		}
 		if quote.GetHeader().GetVersion() == 0 {
 			t.Error("quote header Version is zero")
@@ -328,9 +328,9 @@ func TestVerifyQuote(t *testing.T) {
 		var wrong [64]byte
 		copy(wrong[:], reportData[:])
 		wrong[0] ^= 0xFF
-		_, err := VerifyQuote(blob, wrong, now)
+		_, err := VerifyEvidence(blob, wrong, now)
 		if err == nil {
-			t.Fatal("VerifyQuote() expected error for wrong report data")
+			t.Fatal("VerifyEvidence() expected error for wrong report data")
 		}
 	})
 
@@ -346,16 +346,24 @@ func TestVerifyQuote(t *testing.T) {
 		} else {
 			corrupted[len(corrupted)/2] ^= 0xFF
 		}
-		_, err := VerifyQuote(corrupted, reportData, now)
+		_, err := VerifyEvidence(corrupted, reportData, now)
 		if err == nil {
-			t.Fatal("VerifyQuote() expected error for corrupted quote")
+			t.Fatal("VerifyEvidence() expected error for corrupted quote")
 		}
 	})
 
 	t.Run("truncated quote", func(t *testing.T) {
-		_, err := VerifyQuote(blob[:100], reportData, now)
+		_, err := VerifyEvidence(blob[:100], reportData, now)
 		if err == nil {
-			t.Fatal("VerifyQuote() expected error for truncated quote")
+			t.Fatal("VerifyEvidence() expected error for truncated quote")
+		}
+	})
+
+	t.Run("empty blob", func(t *testing.T) {
+		var rd [64]byte
+		_, err := VerifyEvidence(nil, rd, time.Now())
+		if err == nil {
+			t.Fatal("VerifyEvidence() expected error for empty blob")
 		}
 	})
 }

@@ -140,18 +140,39 @@ List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `AT
 - All Go code must be `go fmt`-conformant. Always run `go fmt ./...` before committing.
 - Use `github.com/goccy/go-json` everywhere instead of `encoding/json`. The attestation handler marshals report data with `json.MarshalWithOption(..., json.DisableHTMLEscape())` for the nonce digest, then embeds those exact bytes (via `json.RawMessage`) in the response to guarantee byte-for-byte consistency.
 
+## TEE package public API
+
+Each TEE package (`pkg/nitro`, `pkg/sevsnp`, `pkg/tdx`) exposes a consistent set of public functions:
+
+| Function | Purpose |
+|----------|---------|
+| `GetEvidence` | Retrieve raw evidence from the device without verification |
+| `VerifyEvidence` | Verify a raw evidence blob (standalone, no device needed) |
+| `Attest` | Combined retrieval + verification (calls `GetEvidence` then `VerifyEvidence`) |
+| `SelfAttest` | Attest with a random nonce/report data; used at startup to catch environment issues early |
+
+The `sevsnp` package additionally exports `SplitEvidence` (split a blob into raw report + certificate table) and `ReportSize` (the raw report size constant).
+
 ## SEV-SNP workarounds (pkg/sevsnp)
 
-`VerifyAttestation` implements its own verification flow instead of using `verify.SnpAttestation` from go-sev-guest (v0.14.1) to work around three library issues affecting cloud platforms like AWS Nitro. The workarounds are documented in the function's doc comment. Key constraints:
+`VerifyEvidence` implements its own verification flow instead of using `verify.SnpAttestation` from go-sev-guest (v0.14.1) to work around three library issues affecting cloud platforms like AWS Nitro. The workarounds are documented in the function's doc comment. Key constraints:
 
 - **Do not replace with `verify.SnpAttestation`** — it will fail on AWS due to unknown policy bits, malformed ASK/ARK certs in the certificate table, and proto round-trip breaking the signature.
 - **Do not remove `reportToProto`** — it sanitises policy bits for parsing while preserving the original value for the API response.
 - **Do not remove `trustedRoots`** — these pre-parsed AMD root certs bypass the malformed certificate table entries.
 - These workarounds can be revisited when go-sev-guest ships a release including [PR #181](https://github.com/google/go-sev-guest/pull/181) and fixes certificate table handling.
 
+### SEV-SNP performance: certificate buffer caching
+
+`GetEvidence` (and by extension `Attest`) caches the certificate table size after the first call. The go-sev-guest library's `GetRawExtendedReportAtVmpl` performs two ioctls per call (probe for cert buffer size + actual attestation), and the library's self-throttle inserts a ~2 s sleep between ioctls. By caching the cert size, subsequent calls use a single ioctl via `getExtendedReportDirect`, eliminating one PSP firmware round-trip and one throttle delay. The `SelfAttest` call at startup primes this cache.
+
 ## Attestation handler
 
-The handler collects TEE evidence by calling the platform-specific `Attest` function, then **self-verifies every evidence blob** using the same `Verify*` function that external verifiers would use before including it in the response. This catches corrupted device output or driver bugs before they reach callers.
+The handler calls `Attest` on each configured TEE device. Each `Attest` method retrieves evidence and verifies it internally using the same `VerifyEvidence` function that external verifiers would use, catching corrupted device output or driver bugs before they reach callers. The handler receives the verified parsed result alongside the raw blob and does not perform any additional verification.
+
+### Startup self-attestation
+
+During server initialization (`NewServer`), each opened TEE device is self-attested via `SelfAttest` with random nonce/report data. This catches environment issues early (tampered firmware, broken devices) and — for SEV-SNP — primes the certificate buffer cache. The server exits on any self-attestation failure.
 
 ## Transitive dependency attestation
 

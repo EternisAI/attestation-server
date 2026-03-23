@@ -251,7 +251,7 @@ func deriveNonce(t *testing.T, rawData json.RawMessage) []byte {
 	return digest[:]
 }
 
-func TestVerifyAttestation(t *testing.T) {
+func TestVerifyEvidence(t *testing.T) {
 	fixtures := []struct {
 		name     string
 		filename string
@@ -281,9 +281,9 @@ func TestVerifyAttestation(t *testing.T) {
 			nonce := deriveNonce(t, f.Report.Data)
 
 			t.Run("valid", func(t *testing.T) {
-				doc, err := VerifyAttestation(blob, nonce, now)
+				doc, err := VerifyEvidence(blob, nonce, now)
 				if err != nil {
-					t.Fatalf("VerifyAttestation() error: %v", err)
+					t.Fatalf("VerifyEvidence() error: %v", err)
 				}
 				if doc.ModuleID == "" {
 					t.Error("ModuleID is empty")
@@ -341,9 +341,9 @@ func TestVerifyAttestation(t *testing.T) {
 				wrongNonce := make([]byte, len(nonce))
 				copy(wrongNonce, nonce)
 				wrongNonce[0] ^= 0xFF
-				_, err := VerifyAttestation(blob, wrongNonce, now)
+				_, err := VerifyEvidence(blob, wrongNonce, now)
 				if err == nil {
-					t.Fatal("VerifyAttestation() expected error for wrong nonce")
+					t.Fatal("VerifyEvidence() expected error for wrong nonce")
 				}
 			})
 
@@ -353,18 +353,18 @@ func TestVerifyAttestation(t *testing.T) {
 				// Corrupt bytes in the COSE signature area
 				corrupted[len(corrupted)/2] ^= 0xFF
 				corrupted[len(corrupted)/2+1] ^= 0xFF
-				_, err := VerifyAttestation(corrupted, nonce, now)
+				_, err := VerifyEvidence(corrupted, nonce, now)
 				if err == nil {
-					t.Fatal("VerifyAttestation() expected error for corrupted blob")
+					t.Fatal("VerifyEvidence() expected error for corrupted blob")
 				}
 			})
 		})
 	}
 
 	t.Run("empty blob", func(t *testing.T) {
-		_, err := VerifyAttestation(nil, nil, time.Now())
+		_, err := VerifyEvidence(nil, nil, time.Now())
 		if err == nil {
-			t.Fatal("VerifyAttestation() expected error for empty blob")
+			t.Fatal("VerifyEvidence() expected error for empty blob")
 		}
 	})
 }

@@ -11,7 +11,6 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/go-sev-guest/abi"
 
 	"github.com/eternisai/attestation-server/pkg/nitro"
 	"github.com/eternisai/attestation-server/pkg/sevsnp"
@@ -157,15 +156,16 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	// Collect attestation evidence.
+	// Collect attestation evidence. Each Attest method self-verifies the
+	// evidence using the same verification function that external verifiers
+	// use, catching corrupted device output or driver bugs before they
+	// reach callers. The verified parsed result is returned alongside the
+	// raw blob.
+	//
 	// NitroNSM and TDX are exclusive and return immediately.
 	if s.cfg.ReportEvidence.NitroNSM {
 		start := time.Now()
-		blob, err := s.nitroNSM.Attest(digest[:])
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
-		}
-		doc, err := nitro.VerifyAttestation(blob, digest[:], time.Now())
+		blob, doc, err := s.nitroNSM.Attest(digest[:])
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
 		}
@@ -181,11 +181,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 
 	if s.cfg.ReportEvidence.TDX {
 		start := time.Now()
-		blob, _, err := s.tdxDev.Attest(digest)
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tdx: %v", err))
-		}
-		quote, err := tdx.VerifyQuote(blob, digest, time.Now())
+		blob, quote, err := s.tdxDev.Attest(digest)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tdx: %v", err))
 		}
@@ -205,11 +201,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	var nitroTPMBlob []byte
 	if s.cfg.ReportEvidence.NitroTPM {
 		start := time.Now()
-		blob, err := s.attestNitroTPM(digest[:])
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
-		}
-		doc, err := nitro.VerifyAttestation(blob, digest[:], time.Now())
+		blob, doc, err := s.nitroTPM.Attest(digest[:])
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
 		}
@@ -229,14 +221,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		} else {
 			snpReportData = digest
 		}
-		blob, _, err := s.sevSNP.Attest(snpReportData, s.cfg.ReportEvidence.SEVSNPVMPL)
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("sevsnp: %v", err))
-		}
-		if len(blob) < abi.ReportSize {
-			return fiber.NewError(fiber.StatusInternalServerError, "sevsnp: attestation blob too short")
-		}
-		snpReport, err := sevsnp.VerifyAttestation(blob[:abi.ReportSize], blob[abi.ReportSize:], snpReportData, nil, time.Now())
+		blob, snpReport, err := s.sevSNP.Attest(snpReportData, s.cfg.ReportEvidence.SEVSNPVMPL)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("sevsnp: %v", err))
 		}
@@ -268,15 +253,6 @@ func sendReport(c *fiber.Ctx, report *AttestationReport, reportDataJSON []byte) 
 	}
 	c.Set("Content-Type", "application/json")
 	return c.Send(body)
-}
-
-// attestNitroTPM obtains a Nitro attestation document via the NitroTPM device.
-func (s *Server) attestNitroTPM(nonce []byte) ([]byte, error) {
-	doc, err := s.nitroTPM.Attest(nonce)
-	if err != nil {
-		return nil, fmt.Errorf("tpm attestation request failed: %w", err)
-	}
-	return doc, nil
 }
 
 // extractXFCCHash extracts the Hash field from an x-forwarded-client-cert

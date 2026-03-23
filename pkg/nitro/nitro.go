@@ -107,12 +107,12 @@ func toHexBytesMap(m map[int][]byte) map[int]HexBytes {
 	return out
 }
 
-// VerifyAttestation parses a COSE_Sign1-wrapped Nitro attestation
-// document, verifies the COSE ES384 signature and certificate chain against
-// the well-known AWS Nitro root CA, checks that the nonce matches, and returns
+// VerifyEvidence parses a COSE_Sign1-wrapped Nitro attestation document,
+// verifies the COSE ES384 signature and certificate chain against the
+// well-known AWS Nitro root CA, checks that the nonce matches, and returns
 // the full deserialized document. Works for both NSM and NitroTPM
 // attestation documents.
-func VerifyAttestation(blob, expectedNonce []byte, now time.Time) (*AttestationDocument, error) {
+func VerifyEvidence(blob, expectedNonce []byte, now time.Time) (*AttestationDocument, error) {
 	// --- 1. Parse COSE_Sign1 envelope ---
 	// COSE_Sign1 = [protected, unprotected, payload, signature]
 	// fxamacker/cbor strips the CBOR tag 18 transparently.

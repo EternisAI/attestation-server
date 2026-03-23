@@ -14,7 +14,6 @@ import (
 	"github.com/eternisai/attestation-server/pkg/nitro"
 	"github.com/eternisai/attestation-server/pkg/sevsnp"
 	"github.com/eternisai/attestation-server/pkg/tdx"
-	"github.com/google/go-sev-guest/abi"
 )
 
 func TestExtractXFCCHash(t *testing.T) {
@@ -293,9 +292,9 @@ func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 
 	// Step 1: Verify NitroTPM attestation with digest as nonce.
 	t.Run("nitrotpm verification", func(t *testing.T) {
-		doc, err := nitro.VerifyAttestation(nitroTPMBlob, digest[:], now)
+		doc, err := nitro.VerifyEvidence(nitroTPMBlob, digest[:], now)
 		if err != nil {
-			t.Fatalf("nitro.VerifyAttestation() error: %v", err)
+			t.Fatalf("nitro.VerifyEvidence() error: %v", err)
 		}
 		if !bytes.Equal(doc.Nonce, digest[:]) {
 			t.Error("NitroTPM nonce does not match expected digest")
@@ -326,18 +325,12 @@ func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 			t.Fatalf("decoding sevsnp blob: %v", err)
 		}
 
-		if len(snpBlob) < abi.ReportSize {
-			t.Fatalf("sevsnp blob too short: %d < %d", len(snpBlob), abi.ReportSize)
-		}
-		rawReport := snpBlob[:abi.ReportSize]
-		certTable := snpBlob[abi.ReportSize:]
-
 		// The handler chains: snpReportData = SHA-512(nitroTPMBlob)
 		snpReportData := sha512.Sum512(nitroTPMBlob)
 
-		report, err := sevsnp.VerifyAttestation(rawReport, certTable, snpReportData, nil, now)
+		report, err := sevsnp.VerifyEvidence(snpBlob, snpReportData, now)
 		if err != nil {
-			t.Fatalf("sevsnp.VerifyAttestation() error: %v", err)
+			t.Fatalf("sevsnp.VerifyEvidence() error: %v", err)
 		}
 		if !bytes.Equal(report.ReportData, snpReportData[:]) {
 			t.Error("SEV-SNP report_data does not match SHA-512(nitroTPMBlob)")
@@ -365,13 +358,11 @@ func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decoding sevsnp blob: %v", err)
 		}
-		rawReport := snpBlob[:abi.ReportSize]
-		certTable := snpBlob[abi.ReportSize:]
 
 		// Using the original digest (not chained) should fail.
-		_, err = sevsnp.VerifyAttestation(rawReport, certTable, digest, nil, now)
+		_, err = sevsnp.VerifyEvidence(snpBlob, digest, now)
 		if err == nil {
-			t.Fatal("sevsnp.VerifyAttestation() should fail when using unchained digest")
+			t.Fatal("sevsnp.VerifyEvidence() should fail when using unchained digest")
 		}
 	})
 }
@@ -470,9 +461,9 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decoding nitrotpm blob: %v", err)
 		}
-		doc, err := nitro.VerifyAttestation(blob, digest[:], now)
+		doc, err := nitro.VerifyEvidence(blob, digest[:], now)
 		if err != nil {
-			t.Fatalf("nitro.VerifyAttestation() error: %v", err)
+			t.Fatalf("nitro.VerifyEvidence() error: %v", err)
 		}
 
 		got := nitro.NewAttestationData(doc)
@@ -509,12 +500,9 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		snpBlob, _ := base64.StdEncoding.DecodeString(snpEntry.Blob)
 
 		snpReportData := sha512.Sum512(nitroTPMBlob)
-		if len(snpBlob) < abi.ReportSize {
-			t.Fatalf("sevsnp blob too short: %d < %d", len(snpBlob), abi.ReportSize)
-		}
-		report, err := sevsnp.VerifyAttestation(snpBlob[:abi.ReportSize], snpBlob[abi.ReportSize:], snpReportData, nil, now)
+		report, err := sevsnp.VerifyEvidence(snpBlob, snpReportData, now)
 		if err != nil {
-			t.Fatalf("sevsnp.VerifyAttestation() error: %v", err)
+			t.Fatalf("sevsnp.VerifyEvidence() error: %v", err)
 		}
 
 		got := sevsnp.NewAttestationData(report)
@@ -564,9 +552,9 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		depDigest := sha512.Sum512(depDataBuf.Bytes())
 
 		blob, _ := base64.StdEncoding.DecodeString(dep.Evidence[0].Blob)
-		quote, err := tdx.VerifyQuote(blob, depDigest, now)
+		quote, err := tdx.VerifyEvidence(blob, depDigest, now)
 		if err != nil {
-			t.Fatalf("tdx.VerifyQuote() error: %v", err)
+			t.Fatalf("tdx.VerifyEvidence() error: %v", err)
 		}
 
 		got := tdx.NewAttestationData(quote)
@@ -634,12 +622,9 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		depDigest := sha512.Sum512(depDataBuf.Bytes())
 
 		blob, _ := base64.StdEncoding.DecodeString(dep.Evidence[0].Blob)
-		if len(blob) < abi.ReportSize {
-			t.Fatalf("sevsnp blob too short")
-		}
-		report, err := sevsnp.VerifyAttestation(blob[:abi.ReportSize], blob[abi.ReportSize:], depDigest, nil, now)
+		report, err := sevsnp.VerifyEvidence(blob, depDigest, now)
 		if err != nil {
-			t.Fatalf("sevsnp.VerifyAttestation() error: %v", err)
+			t.Fatalf("sevsnp.VerifyEvidence() error: %v", err)
 		}
 
 		got := sevsnp.NewAttestationData(report)
@@ -700,12 +685,9 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		subDigest := sha512.Sum512(subDataBuf.Bytes())
 
 		blob, _ := base64.StdEncoding.DecodeString(subDep.Evidence[0].Blob)
-		if len(blob) < abi.ReportSize {
-			t.Fatalf("sevsnp blob too short")
-		}
-		_, err := sevsnp.VerifyAttestation(blob[:abi.ReportSize], blob[abi.ReportSize:], subDigest, nil, now)
+		_, err := sevsnp.VerifyEvidence(blob, subDigest, now)
 		if err != nil {
-			t.Fatalf("sevsnp.VerifyAttestation() error: %v", err)
+			t.Fatalf("sevsnp.VerifyEvidence() error: %v", err)
 		}
 	})
 

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/google/go-sev-guest/abi"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/eternisai/attestation-server/pkg/nitro"
@@ -249,11 +248,11 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 	for _, ev := range report.Evidence {
 		switch ev.Kind {
 		case "nitronsm":
-			if _, err := nitro.VerifyAttestation(ev.Blob, digest[:], now); err != nil {
+			if _, err := nitro.VerifyEvidence(ev.Blob, digest[:], now); err != nil {
 				return fmt.Errorf("nitronsm verification: %w", err)
 			}
 		case "nitrotpm":
-			if _, err := nitro.VerifyAttestation(ev.Blob, digest[:], now); err != nil {
+			if _, err := nitro.VerifyEvidence(ev.Blob, digest[:], now); err != nil {
 				return fmt.Errorf("nitrotpm verification: %w", err)
 			}
 			nitroTPMBlob = ev.Blob
@@ -264,16 +263,11 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 			} else {
 				snpReportData = digest
 			}
-			if len(ev.Blob) < abi.ReportSize {
-				return fmt.Errorf("sevsnp blob too short: %d < %d", len(ev.Blob), abi.ReportSize)
-			}
-			rawReport := ev.Blob[:abi.ReportSize]
-			certTable := ev.Blob[abi.ReportSize:]
-			if _, err := sevsnp.VerifyAttestation(rawReport, certTable, snpReportData, nil, now); err != nil {
+			if _, err := sevsnp.VerifyEvidence(ev.Blob, snpReportData, now); err != nil {
 				return fmt.Errorf("sevsnp verification: %w", err)
 			}
 		case "tdx":
-			if _, err := tdx.VerifyQuote(ev.Blob, digest, now); err != nil {
+			if _, err := tdx.VerifyEvidence(ev.Blob, digest, now); err != nil {
 				return fmt.Errorf("tdx verification: %w", err)
 			}
 		default:

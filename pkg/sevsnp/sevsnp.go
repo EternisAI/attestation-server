@@ -2,9 +2,11 @@ package sevsnp
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/google/go-sev-guest/abi"
 	"github.com/google/go-sev-guest/client"
+	labi "github.com/google/go-sev-guest/client/linuxabi"
 	"github.com/google/go-sev-guest/kds"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
 	"github.com/google/go-sev-guest/verify/trust"
@@ -27,11 +30,12 @@ func (h HexBytes) MarshalJSON() ([]byte, error) {
 
 // Device manages the SEV-SNP guest device for attestation.
 // All device access is serialized by an internal mutex because the underlying
-// LinuxDevice performs multiple ioctls per attestation request and has no
+// LinuxDevice performs ioctls with shared state (throttle timers) and has no
 // built-in synchronization.
 type Device struct {
-	mu  sync.Mutex
-	dev client.Device
+	mu          sync.Mutex
+	dev         client.Device
+	certBufSize uint32 // cached certificate table size; 0 = not yet known
 }
 
 // Open opens the SEV-SNP guest device for attestation.
@@ -52,28 +56,147 @@ func (s *Device) Close() error {
 // report data at the specified VMPL. It returns the concatenated raw report +
 // certificate table (parseable by abi.ReportCertsToProto) and the verified
 // parsed report.
+//
+// The ioctl is performed under the device mutex, but cryptographic verification
+// runs after the mutex is released so that concurrent requests can proceed to
+// the device sooner.
+//
+// When the certificate table size has been cached (by a prior Attest or
+// SelfAttest call), the method performs a single ioctl instead of the two-ioctl
+// probe+attest sequence that client.GetRawExtendedReportAtVmpl uses. This
+// eliminates one round-trip to the PSP firmware and avoids the go-sev-guest
+// library's inter-ioctl self-throttle delay (~2 s by default).
 func (s *Device) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	rawReport, certTable, err := client.GetRawExtendedReportAtVmpl(s.dev, reportData, vmpl)
+	blob, err := s.GetEvidence(reportData, vmpl)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sev-snp attestation request failed: %w", err)
 	}
 
-	report, err := VerifyAttestation(rawReport, certTable, reportData, s.dev.Product(), time.Now())
+	report, err := VerifyEvidence(blob, reportData, time.Now())
 	if err != nil {
 		return nil, nil, err
 	}
 
-	blob := make([]byte, len(rawReport)+len(certTable))
-	copy(blob, rawReport)
-	copy(blob[len(rawReport):], certTable)
-
 	return blob, report, nil
 }
 
-// VerifyAttestation parses the raw report and certificate table, verifies
+// SelfAttest performs an attestation with random report data and verifies the
+// result. It should be called once at startup to catch environment issues early
+// (e.g. tampered firmware, broken device) and to cache the certificate table
+// size for subsequent Attest calls.
+func (s *Device) SelfAttest(vmpl int) error {
+	var reportData [64]byte
+	if _, err := rand.Read(reportData[:]); err != nil {
+		return fmt.Errorf("generating random report data: %w", err)
+	}
+	_, _, err := s.Attest(reportData, vmpl)
+	return err
+}
+
+// GetEvidence retrieves the raw SEV-SNP attestation report and certificate
+// table as a single concatenated blob, without performing verification. The
+// blob can be split into its components with SplitEvidence. Use
+// VerifyEvidence to verify the blob, or use Attest for combined retrieval
+// and verification.
+//
+// On the first call it uses a two-ioctl path (probe for cert buffer size,
+// then actual attestation) and caches the cert table size. Subsequent calls
+// use a single ioctl with the cached buffer size.
+func (s *Device) GetEvidence(reportData [64]byte, vmpl int) ([]byte, error) {
+	rawReport, certTable, err := s.getExtendedReport(reportData, vmpl)
+	if err != nil {
+		return nil, err
+	}
+	blob := make([]byte, len(rawReport)+len(certTable))
+	copy(blob, rawReport)
+	copy(blob[len(rawReport):], certTable)
+	return blob, nil
+}
+
+// getExtendedReport retrieves the raw report and certificate table under the
+// device mutex.
+func (s *Device) getExtendedReport(reportData [64]byte, vmpl int) ([]byte, []byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.certBufSize > 0 {
+		rawReport, certTable, err := s.getExtendedReportDirect(reportData, vmpl)
+		if err == nil {
+			return rawReport, certTable, nil
+		}
+		// If the cached cert buffer size was too small (hypervisor updated
+		// its cert config), retry once with the firmware-reported new size.
+		var fwErr *abi.SevFirmwareErr
+		if errors.As(err, &fwErr) && fwErr.Status == abi.GuestRequestInvalidLength && s.certBufSize > 0 {
+			return s.getExtendedReportDirect(reportData, vmpl)
+		}
+		return nil, nil, err
+	}
+
+	// First call: use the library's probe + attest path and cache the size.
+	rawReport, certTable, err := client.GetRawExtendedReportAtVmpl(s.dev, reportData, vmpl)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.certBufSize = uint32(len(certTable))
+	return rawReport, certTable, nil
+}
+
+// getExtendedReportDirect performs a single SNP_GET_EXTENDED_REPORT ioctl
+// with a pre-allocated certificate buffer using the cached size. This avoids
+// the probe ioctl and the library's inter-ioctl self-throttle.
+//
+// If the buffer is too small, the firmware sets GuestRequestInvalidLength
+// and reports the required size in CertsLength. The caller should update
+// certBufSize and retry.
+func (s *Device) getExtendedReportDirect(reportData [64]byte, vmpl int) ([]byte, []byte, error) {
+	var snpReportRsp labi.SnpReportRespABI
+	certs := make([]byte, s.certBufSize)
+	extReq := &labi.SnpExtendedReportReq{
+		Data: labi.SnpReportReqABI{
+			ReportData: reportData,
+			Vmpl:       uint32(vmpl),
+		},
+		Certs:       certs,
+		CertsLength: s.certBufSize,
+	}
+	req := &labi.SnpUserGuestRequest{
+		ReqData:  extReq,
+		RespData: &snpReportRsp,
+	}
+	result, err := s.dev.Ioctl(labi.IocSnpGetExtendedReport, req)
+	if err != nil {
+		if req.FwErr != 0 {
+			fwStatus := abi.SevFirmwareStatus(req.FwErr)
+			if fwStatus == abi.GuestRequestInvalidLength {
+				// Update cache with the firmware-reported required size.
+				s.certBufSize = extReq.CertsLength
+			}
+			return nil, nil, &abi.SevFirmwareErr{Status: fwStatus}
+		}
+		return nil, nil, err
+	}
+	if result != uintptr(labi.EsOk) {
+		return nil, nil, &labi.SevEsErr{Result: labi.EsResult(result)}
+	}
+	return snpReportRsp.Data[:abi.ReportSize], certs[:extReq.CertsLength], nil
+}
+
+// ReportSize is the size of a raw SEV-SNP attestation report in bytes.
+// Re-exported from go-sev-guest/abi for convenience.
+const ReportSize = abi.ReportSize
+
+// SplitEvidence splits a concatenated evidence blob (as returned by
+// GetEvidence and Attest) into its raw report and certificate table
+// components.
+func SplitEvidence(blob []byte) (rawReport, certTable []byte, err error) {
+	if len(blob) < abi.ReportSize {
+		return nil, nil, fmt.Errorf("sev-snp evidence too short: %d < %d", len(blob), abi.ReportSize)
+	}
+	return blob[:abi.ReportSize], blob[abi.ReportSize:], nil
+}
+
+// VerifyEvidence parses the raw report and certificate table, verifies
 // the ECDSA-P384 signature against AMD's embedded trust roots (offline, no
 // CRL check), and validates that the report data field matches the expected
 // value.
@@ -105,7 +228,12 @@ func (s *Device) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, err
 //     bytes differ from what the hardware actually signed, causing ECDSA
 //     verification to fail. We verify the signature directly against the
 //     original raw report bytes instead.
-func VerifyAttestation(rawReport, certTable []byte, expectedReportData [64]byte, product *spb.SevProduct, now time.Time) (*spb.Report, error) {
+func VerifyEvidence(blob []byte, expectedReportData [64]byte, now time.Time) (*spb.Report, error) {
+	rawReport, certTable, err := SplitEvidence(blob)
+	if err != nil {
+		return nil, err
+	}
+
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -207,7 +335,7 @@ func VerifyAttestation(rawReport, certTable []byte, expectedReportData [64]byte,
 // are parsed once at init time from the PEM bundles shipped with
 // go-sev-guest and used to verify the endorsement key's certificate chain
 // without relying on the ASK/ARK entries in the report's certificate table
-// (see issue 2 in VerifyAttestation's doc comment).
+// (see issue 2 in VerifyEvidence's doc comment).
 var trustedRoots = func() map[string][]*trust.AMDRootCerts {
 	roots := make(map[string][]*trust.AMDRootCerts)
 	for _, cfg := range []struct {

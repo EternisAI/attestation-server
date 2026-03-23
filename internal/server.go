@@ -127,8 +127,12 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("opening nitro nsm: %w", err)
 		}
+		start := time.Now()
+		if err := nsmDev.SelfAttest(); err != nil {
+			return nil, fmt.Errorf("nitro nsm self-attestation: %w", err)
+		}
 		s.nitroNSM = nsmDev
-		logger.Info("opened nitro nsm session")
+		logger.Info("opened and verified nitro nsm session", "duration_ms", time.Since(start).Milliseconds())
 	}
 
 	if cfg.ReportEvidence.NitroTPM {
@@ -136,8 +140,12 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("opening nitro tpm: %w", err)
 		}
+		start := time.Now()
+		if err := tpmDev.SelfAttest(); err != nil {
+			return nil, fmt.Errorf("nitro tpm self-attestation: %w", err)
+		}
 		s.nitroTPM = tpmDev
-		logger.Info("opened nitro tpm device")
+		logger.Info("opened and verified nitro tpm device", "duration_ms", time.Since(start).Milliseconds())
 	}
 
 	if cfg.ReportEvidence.SEVSNP {
@@ -145,8 +153,12 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("opening sev-snp device: %w", err)
 		}
+		start := time.Now()
+		if err := snp.SelfAttest(cfg.ReportEvidence.SEVSNPVMPL); err != nil {
+			return nil, fmt.Errorf("sev-snp self-attestation: %w", err)
+		}
 		s.sevSNP = snp
-		logger.Info("opened sev-snp guest device")
+		logger.Info("opened and verified sev-snp guest device", "duration_ms", time.Since(start).Milliseconds())
 	}
 
 	if cfg.ReportEvidence.TDX {
@@ -154,8 +166,12 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("opening tdx device: %w", err)
 		}
+		start := time.Now()
+		if err := tdxDev.SelfAttest(); err != nil {
+			return nil, fmt.Errorf("tdx self-attestation: %w", err)
+		}
 		s.tdxDev = tdxDev
-		logger.Info("opened tdx guest device")
+		logger.Info("opened and verified tdx guest device", "duration_ms", time.Since(start).Milliseconds())
 	}
 
 	if len(cfg.DependencyEndpoints) > 0 {

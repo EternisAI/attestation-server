@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-sev-guest/abi"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
 )
 
@@ -232,7 +231,7 @@ func deriveReportData(t *testing.T, rawData json.RawMessage) [64]byte {
 	return sha512.Sum512(buf.Bytes())
 }
 
-func TestVerifyAttestation(t *testing.T) {
+func TestVerifyEvidence(t *testing.T) {
 	fixtures := []struct {
 		name     string
 		filename string
@@ -261,18 +260,10 @@ func TestVerifyAttestation(t *testing.T) {
 
 			reportData := deriveReportData(t, f.Report.Data)
 
-			// Split blob into raw report and certificate table.
-			// SEV-SNP raw report is always abi.ReportSize (0x4A0 = 1184) bytes.
-			if len(blob) < abi.ReportSize {
-				t.Fatalf("blob too short for SEV-SNP report: %d < %d", len(blob), abi.ReportSize)
-			}
-			rawReport := blob[:abi.ReportSize]
-			certTable := blob[abi.ReportSize:]
-
 			t.Run("valid", func(t *testing.T) {
-				report, err := VerifyAttestation(rawReport, certTable, reportData, nil, now)
+				report, err := VerifyEvidence(blob, reportData, now)
 				if err != nil {
-					t.Fatalf("VerifyAttestation() error: %v", err)
+					t.Fatalf("VerifyEvidence() error: %v", err)
 				}
 				if report.Version == 0 {
 					t.Error("report Version is zero")
@@ -303,23 +294,93 @@ func TestVerifyAttestation(t *testing.T) {
 				var wrong [64]byte
 				copy(wrong[:], reportData[:])
 				wrong[0] ^= 0xFF
-				_, err := VerifyAttestation(rawReport, certTable, wrong, nil, now)
+				_, err := VerifyEvidence(blob, wrong, now)
 				if err == nil {
-					t.Fatal("VerifyAttestation() expected error for wrong report data")
+					t.Fatal("VerifyEvidence() expected error for wrong report data")
 				}
 			})
 
 			t.Run("corrupted report", func(t *testing.T) {
+				rawReport, certTable, err := SplitEvidence(blob)
+				if err != nil {
+					t.Fatal(err)
+				}
 				corrupted := make([]byte, len(rawReport))
 				copy(corrupted, rawReport)
 				// Corrupt bytes in the signature area near the end of the report
 				corrupted[len(corrupted)-10] ^= 0xFF
 				corrupted[len(corrupted)-11] ^= 0xFF
-				_, err := VerifyAttestation(corrupted, certTable, reportData, nil, now)
+				corruptedBlob := append(corrupted, certTable...)
+				_, err = VerifyEvidence(corruptedBlob, reportData, now)
 				if err == nil {
-					t.Fatal("VerifyAttestation() expected error for corrupted report")
+					t.Fatal("VerifyEvidence() expected error for corrupted report")
 				}
 			})
 		})
 	}
+
+	t.Run("empty blob", func(t *testing.T) {
+		var rd [64]byte
+		_, err := VerifyEvidence(nil, rd, time.Now())
+		if err == nil {
+			t.Fatal("VerifyEvidence() expected error for empty blob")
+		}
+	})
+
+	t.Run("blob shorter than ReportSize", func(t *testing.T) {
+		var rd [64]byte
+		_, err := VerifyEvidence(make([]byte, ReportSize-1), rd, time.Now())
+		if err == nil {
+			t.Fatal("VerifyEvidence() expected error for short blob")
+		}
+	})
+}
+
+func TestSplitEvidence(t *testing.T) {
+	t.Run("nil blob", func(t *testing.T) {
+		_, _, err := SplitEvidence(nil)
+		if err == nil {
+			t.Fatal("SplitEvidence(nil) expected error")
+		}
+	})
+
+	t.Run("too short", func(t *testing.T) {
+		_, _, err := SplitEvidence(make([]byte, ReportSize-1))
+		if err == nil {
+			t.Fatal("SplitEvidence() expected error for short blob")
+		}
+	})
+
+	t.Run("exact ReportSize", func(t *testing.T) {
+		blob := make([]byte, ReportSize)
+		blob[0] = 0xAA
+		raw, certs, err := SplitEvidence(blob)
+		if err != nil {
+			t.Fatalf("SplitEvidence() error: %v", err)
+		}
+		if len(raw) != ReportSize {
+			t.Errorf("rawReport len = %d, want %d", len(raw), ReportSize)
+		}
+		if raw[0] != 0xAA {
+			t.Error("rawReport content mismatch")
+		}
+		if len(certs) != 0 {
+			t.Errorf("certTable len = %d, want 0", len(certs))
+		}
+	})
+
+	t.Run("report plus certs", func(t *testing.T) {
+		certData := []byte{0x01, 0x02, 0x03}
+		blob := append(make([]byte, ReportSize), certData...)
+		raw, got, err := SplitEvidence(blob)
+		if err != nil {
+			t.Fatalf("SplitEvidence() error: %v", err)
+		}
+		if len(raw) != ReportSize {
+			t.Errorf("rawReport len = %d, want %d", len(raw), ReportSize)
+		}
+		if !bytes.Equal(got, certData) {
+			t.Errorf("certTable = %v, want %v", got, certData)
+		}
+	})
 }

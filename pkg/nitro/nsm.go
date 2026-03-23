@@ -1,8 +1,10 @@
 package nitro
 
 import (
+	"crypto/rand"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/hf/nsm"
 	"github.com/hf/nsm/request"
@@ -31,8 +33,28 @@ func (n *NSM) Close() error {
 	return n.sess.Close()
 }
 
-// Attest obtains an NSM attestation document with the given nonce.
-func (n *NSM) Attest(nonce []byte) ([]byte, error) {
+// Attest obtains an NSM attestation document with the given nonce, verifies
+// the COSE signature and certificate chain, and returns both the raw blob
+// and the parsed document. Verification uses the same VerifyEvidence
+// function that external verifiers would use, catching corrupted device
+// output before it reaches callers.
+func (n *NSM) Attest(nonce []byte) ([]byte, *AttestationDocument, error) {
+	blob, err := n.GetEvidence(nonce)
+	if err != nil {
+		return nil, nil, err
+	}
+	doc, err := VerifyEvidence(blob, nonce, time.Now())
+	if err != nil {
+		return nil, nil, err
+	}
+	return blob, doc, nil
+}
+
+// GetEvidence obtains the raw NSM attestation document (COSE_Sign1 blob)
+// with the given nonce, without performing verification. Use
+// VerifyEvidence to verify the returned blob separately, or use Attest
+// for combined retrieval and verification.
+func (n *NSM) GetEvidence(nonce []byte) ([]byte, error) {
 	n.mu.Lock()
 	res, err := n.sess.Send(&request.Attestation{
 		Nonce: nonce,
@@ -51,4 +73,16 @@ func (n *NSM) Attest(nonce []byte) ([]byte, error) {
 		return nil, fmt.Errorf("nsm response missing attestation document")
 	}
 	return res.Attestation.Document, nil
+}
+
+// SelfAttest performs an attestation with a random nonce and verifies the
+// result. It should be called once at startup to catch environment issues
+// early (e.g. tampered firmware, broken device).
+func (n *NSM) SelfAttest() error {
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("generating random nonce: %w", err)
+	}
+	_, _, err := n.Attest(nonce)
+	return err
 }
