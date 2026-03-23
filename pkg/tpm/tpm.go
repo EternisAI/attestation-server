@@ -3,18 +3,41 @@ package tpm
 import (
 	"encoding/hex"
 	"fmt"
-	"strconv"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport/linuxtpm"
 )
 
+// HexBytes is a byte slice that serializes to a hex-encoded JSON string
+// instead of the default base64.
+type HexBytes []byte
+
+func (h HexBytes) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + hex.EncodeToString(h) + `"`), nil
+}
+
+func (h *HexBytes) UnmarshalJSON(data []byte) error {
+	if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
+		return fmt.Errorf("HexBytes: expected JSON string")
+	}
+	s := string(data[1 : len(data)-1])
+	if s == "" {
+		*h = nil
+		return nil
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return fmt.Errorf("HexBytes: invalid hex: %w", err)
+	}
+	*h = b
+	return nil
+}
+
 const devicePath = "/dev/tpmrm0"
 
 // ReadPCRs opens the TPM resource manager device, reads all 24 PCR values
-// for the given hash algorithm, and returns them as hex-encoded strings keyed
-// by PCR index.
-func ReadPCRs(alg tpm2.TPMAlgID) (map[string]string, error) {
+// for the given hash algorithm, and returns them keyed by PCR index.
+func ReadPCRs(alg tpm2.TPMAlgID) (map[int]HexBytes, error) {
 	t, err := linuxtpm.Open(devicePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", devicePath, err)
@@ -22,7 +45,7 @@ func ReadPCRs(alg tpm2.TPMAlgID) (map[string]string, error) {
 	defer t.Close()
 
 	const numPCRs = 24
-	result := make(map[string]string, numPCRs)
+	result := make(map[int]HexBytes, numPCRs)
 
 	// Build initial set of all PCR indices to read.
 	remaining := make([]int, numPCRs)
@@ -62,7 +85,7 @@ func ReadPCRs(alg tpm2.TPMAlgID) (map[string]string, error) {
 				if digestIdx >= len(resp.PCRValues.Digests) {
 					return nil, fmt.Errorf("pcr %d selected in response but no digest available", pcr)
 				}
-				result[strconv.Itoa(pcr)] = hex.EncodeToString(resp.PCRValues.Digests[digestIdx].Buffer)
+				result[pcr] = HexBytes(resp.PCRValues.Digests[digestIdx].Buffer)
 				digestIdx++
 			} else {
 				next = append(next, pcr)
