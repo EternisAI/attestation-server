@@ -149,6 +149,10 @@ List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `AT
 - **Do not remove `trustedRoots`** — these pre-parsed AMD root certs bypass the malformed certificate table entries.
 - These workarounds can be revisited when go-sev-guest ships a release including [PR #181](https://github.com/google/go-sev-guest/pull/181) and fixes certificate table handling.
 
+## Attestation handler
+
+The handler collects TEE evidence by calling the platform-specific `Attest` function, then **self-verifies every evidence blob** using the same `Verify*` function that external verifiers would use before including it in the response. This catches corrupted device output or driver bugs before they reach callers.
+
 ## Transitive dependency attestation
 
 When `dependencies.endpoints` is configured, the attestation handler fetches and verifies attestation reports from all dependency endpoints in parallel before collecting its own evidence. Each dependency receives the same nonce (`x-attestation-nonce` header) derived from the local `AttestationReportData` digest, and the same `X-Request-Id` for traceability.

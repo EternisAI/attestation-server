@@ -11,6 +11,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/go-sev-guest/abi"
 
 	"github.com/eternisai/attestation-server/pkg/nitro"
 	"github.com/eternisai/attestation-server/pkg/sevsnp"
@@ -180,7 +181,11 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 
 	if s.cfg.ReportEvidence.TDX {
 		start := time.Now()
-		blob, quote, err := s.tdxDev.Attest(digest)
+		blob, _, err := s.tdxDev.Attest(digest)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tdx: %v", err))
+		}
+		quote, err := tdx.VerifyQuote(blob, digest, time.Now())
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tdx: %v", err))
 		}
@@ -224,12 +229,19 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		} else {
 			snpReportData = digest
 		}
-		blob, report, err := s.sevSNP.Attest(snpReportData, s.cfg.ReportEvidence.SEVSNPVMPL)
+		blob, _, err := s.sevSNP.Attest(snpReportData, s.cfg.ReportEvidence.SEVSNPVMPL)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("sevsnp: %v", err))
+		}
+		if len(blob) < abi.ReportSize {
+			return fiber.NewError(fiber.StatusInternalServerError, "sevsnp: attestation blob too short")
+		}
+		snpReport, err := sevsnp.VerifyAttestation(blob[:abi.ReportSize], blob[abi.ReportSize:], snpReportData, nil, time.Now())
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("sevsnp: %v", err))
 		}
 		s.logger.Debug("sevsnp attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
-		evidence = append(evidence, &AttestationEvidence{Kind: "sevsnp", Blob: blob, Data: sevsnp.NewAttestationData(report)})
+		evidence = append(evidence, &AttestationEvidence{Kind: "sevsnp", Blob: blob, Data: sevsnp.NewAttestationData(snpReport)})
 	}
 
 	if len(evidence) == 0 {
