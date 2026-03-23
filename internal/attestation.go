@@ -156,6 +156,14 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
+	// Validate own endorsements (cached fast-path or re-fetch on TTL expiry).
+	if len(s.endorsements) > 0 {
+		if err := s.validateOwnEndorsements(c.UserContext()); err != nil {
+			s.logger.Error("endorsement validation failed", "request_id", requestID, "error", err)
+			return fiber.NewError(fiber.StatusInternalServerError, "endorsement validation failed")
+		}
+	}
+
 	// Collect attestation evidence. Each Attest method self-verifies the
 	// evidence using the same verification function that external verifiers
 	// use, catching corrupted device output or driver bugs before they

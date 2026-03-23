@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/spf13/viper"
@@ -14,22 +16,25 @@ import (
 
 // Config holds the resolved server configuration.
 type Config struct {
-	BindHost            string
-	BindPort            int
-	LogFormat           string
-	LogLevel            slog.Level
-	BuildInfoPath       string
-	EndorsementsPath    string
-	PublicTLSCertPath   string
-	PublicTLSKeyPath    string
-	PrivateTLSCertPath  string
-	PrivateTLSKeyPath   string
-	PrivateTLSCAPath    string
-	ReportEvidence      EvidenceConfig
-	ReportEnvVars       []string
-	SecureBootEnforce   bool
-	TPM                 TPMConfig
-	DependencyEndpoints []*url.URL
+	BindHost                 string
+	BindPort                 int
+	LogFormat                string
+	LogLevel                 slog.Level
+	BuildInfoPath            string
+	EndorsementsPath         string
+	PublicTLSCertPath        string
+	PublicTLSKeyPath         string
+	PrivateTLSCertPath       string
+	PrivateTLSKeyPath        string
+	PrivateTLSCAPath         string
+	ReportEvidence           EvidenceConfig
+	ReportEnvVars            []string
+	SecureBootEnforce        bool
+	TPM                      TPMConfig
+	DependencyEndpoints      []*url.URL
+	EndorsementDNSSEC        bool
+	EndorsementClientTimeout time.Duration
+	EndorsementCacheSize     int64
 }
 
 // TPMConfig holds the configuration for generic TPM PCR reading.
@@ -81,23 +86,35 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	endorsementTimeout, err := time.ParseDuration(viper.GetString("endorsements.client.timeout"))
+	if err != nil {
+		endorsementTimeout = 10 * time.Second
+	}
+	endorsementCacheSize, err := parseByteSize(viper.GetString("endorsements.cache.size"))
+	if err != nil {
+		endorsementCacheSize = 100 << 20
+	}
+
 	return &Config{
-		BindHost:            viper.GetString("server.host"),
-		BindPort:            viper.GetInt("server.port"),
-		LogFormat:           viper.GetString("log.format"),
-		LogLevel:            parseLogLevel(viper.GetString("log.level")),
-		BuildInfoPath:       viper.GetString("paths.build_info"),
-		EndorsementsPath:    viper.GetString("paths.endorsements"),
-		PublicTLSCertPath:   absPath(viper.GetString("tls.public.cert_path")),
-		PublicTLSKeyPath:    absPath(viper.GetString("tls.public.key_path")),
-		PrivateTLSCertPath:  absPath(viper.GetString("tls.private.cert_path")),
-		PrivateTLSKeyPath:   absPath(viper.GetString("tls.private.key_path")),
-		PrivateTLSCAPath:    absPath(viper.GetString("tls.private.ca_path")),
-		ReportEvidence:      evidence,
-		ReportEnvVars:       envVars,
-		SecureBootEnforce:   viper.GetBool("secure_boot.enforce"),
-		TPM:                 tpmCfg,
-		DependencyEndpoints: depEndpoints,
+		BindHost:                 viper.GetString("server.host"),
+		BindPort:                 viper.GetInt("server.port"),
+		LogFormat:                viper.GetString("log.format"),
+		LogLevel:                 parseLogLevel(viper.GetString("log.level")),
+		BuildInfoPath:            viper.GetString("paths.build_info"),
+		EndorsementsPath:         viper.GetString("paths.endorsements"),
+		PublicTLSCertPath:        absPath(viper.GetString("tls.public.cert_path")),
+		PublicTLSKeyPath:         absPath(viper.GetString("tls.public.key_path")),
+		PrivateTLSCertPath:       absPath(viper.GetString("tls.private.cert_path")),
+		PrivateTLSKeyPath:        absPath(viper.GetString("tls.private.key_path")),
+		PrivateTLSCAPath:         absPath(viper.GetString("tls.private.ca_path")),
+		ReportEvidence:           evidence,
+		ReportEnvVars:            envVars,
+		SecureBootEnforce:        viper.GetBool("secure_boot.enforce"),
+		TPM:                      tpmCfg,
+		DependencyEndpoints:      depEndpoints,
+		EndorsementDNSSEC:        viper.GetBool("endorsements.dnssec"),
+		EndorsementClientTimeout: endorsementTimeout,
+		EndorsementCacheSize:     endorsementCacheSize,
 	}, nil
 }
 
@@ -222,4 +239,49 @@ func parseLogLevel(s string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// parseByteSize parses a human-readable byte size string like "100MiB" or
+// "1GiB" into a byte count. Supported suffixes: B, KiB, MiB, GiB, TiB
+// (case-insensitive). A bare number without suffix is treated as bytes.
+func parseByteSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty byte size")
+	}
+
+	suffixes := []struct {
+		suffix     string
+		multiplier int64
+	}{
+		{"TiB", 1 << 40},
+		{"GiB", 1 << 30},
+		{"MiB", 1 << 20},
+		{"KiB", 1 << 10},
+		{"B", 1},
+	}
+
+	lower := strings.ToLower(s)
+	for _, sf := range suffixes {
+		if strings.HasSuffix(lower, strings.ToLower(sf.suffix)) {
+			numStr := strings.TrimSpace(s[:len(s)-len(sf.suffix)])
+			n, err := strconv.ParseInt(numStr, 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
+			}
+			if n < 0 {
+				return 0, fmt.Errorf("negative byte size %q", s)
+			}
+			return n * sf.multiplier, nil
+		}
+	}
+
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("negative byte size %q", s)
+	}
+	return n, nil
 }

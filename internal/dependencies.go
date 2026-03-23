@@ -175,13 +175,20 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 	privFP := s.certs.private.certFingerprint
 	s.certs.mu.RUnlock()
 
-	if err := verifyDependencyReport(&report, nonceHex, privFP, time.Now()); err != nil {
+	parsed, err := verifyDependencyReport(&report, nonceHex, privFP, time.Now())
+	if err != nil {
 		if isE2EError(err) {
 			s.logger.Error("dependency end-to-end encryption verification failed",
 				"endpoint", endpoint.String(), "request_id", requestID, "error", err)
 			return nil, fmt.Errorf("dependency end-to-end encryption verification failed")
 		}
 		return nil, fmt.Errorf("verification failed: %w", err)
+	}
+
+	if err := s.validateDependencyEndorsements(ctx, &report, parsed); err != nil {
+		s.logger.Error("dependency endorsement validation failed",
+			"endpoint", endpoint.String(), "request_id", requestID, "error", err)
+		return nil, fmt.Errorf("dependency endorsement validation failed")
 	}
 
 	return json.RawMessage(body), nil
@@ -200,6 +207,13 @@ func isE2EError(err error) bool {
 	return errors.As(err, &e)
 }
 
+// verifyDependencyReportOnly is a convenience wrapper around
+// verifyDependencyReport that discards the parsed evidence results.
+func verifyDependencyReportOnly(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time) error {
+	_, err := verifyDependencyReport(report, expectedNonce, clientCertFP, now)
+	return err
+}
+
 // verifyDependencyReport verifies that a dependency's attestation report
 // has a matching nonce, that all evidence entries are cryptographically
 // valid, and that the dependency acknowledged our client certificate
@@ -210,17 +224,17 @@ func isE2EError(err error) bool {
 // clientCertFP is the SHA-256 hex fingerprint of the private certificate
 // we presented as the TLS client cert when connecting to the dependency.
 // The dependency must include this in data.tls.client.certificate.
-func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time) error {
+func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time) (*parsedDependencyEvidence, error) {
 	if len(report.Evidence) == 0 {
-		return fmt.Errorf("no evidence in report")
+		return nil, fmt.Errorf("no evidence in report")
 	}
 
 	var reportData AttestationReportData
 	if err := json.Unmarshal(report.Data, &reportData); err != nil {
-		return fmt.Errorf("parsing report data: %w", err)
+		return nil, fmt.Errorf("parsing report data: %w", err)
 	}
 	if reportData.Nonce != expectedNonce {
-		return fmt.Errorf("nonce mismatch")
+		return nil, fmt.Errorf("nonce mismatch")
 	}
 
 	// Verify that the dependency recorded our client certificate fingerprint.
@@ -228,10 +242,10 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 	// strips or replaces the client cert, breaking the end-to-end encryption
 	// guarantee bound to the TEE attestation.
 	if reportData.TLS == nil || reportData.TLS.Client == nil || reportData.TLS.Client.CertificateFingerprint == "" {
-		return &errE2E{msg: "dependency response missing client certificate fingerprint in attestation data"}
+		return nil, &errE2E{msg: "dependency response missing client certificate fingerprint in attestation data"}
 	}
 	if reportData.TLS.Client.CertificateFingerprint != clientCertFP {
-		return &errE2E{msg: fmt.Sprintf("client certificate fingerprint mismatch: expected %s, got %s",
+		return nil, &errE2E{msg: fmt.Sprintf("client certificate fingerprint mismatch: expected %s, got %s",
 			clientCertFP, reportData.TLS.Client.CertificateFingerprint)}
 	}
 
@@ -240,21 +254,26 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 	// digest must be computed over the compact form.
 	var compactData bytes.Buffer
 	if err := json.Compact(&compactData, report.Data); err != nil {
-		return fmt.Errorf("compacting report data: %w", err)
+		return nil, fmt.Errorf("compacting report data: %w", err)
 	}
 	digest := sha512.Sum512(compactData.Bytes())
 
+	parsed := &parsedDependencyEvidence{}
 	var nitroTPMBlob []byte
 	for _, ev := range report.Evidence {
 		switch ev.Kind {
 		case "nitronsm":
-			if _, err := nitro.VerifyEvidence(ev.Blob, digest[:], now); err != nil {
-				return fmt.Errorf("nitronsm verification: %w", err)
+			doc, err := nitro.VerifyEvidence(ev.Blob, digest[:], now)
+			if err != nil {
+				return nil, fmt.Errorf("nitronsm verification: %w", err)
 			}
+			parsed.nitroNSMDoc = doc
 		case "nitrotpm":
-			if _, err := nitro.VerifyEvidence(ev.Blob, digest[:], now); err != nil {
-				return fmt.Errorf("nitrotpm verification: %w", err)
+			doc, err := nitro.VerifyEvidence(ev.Blob, digest[:], now)
+			if err != nil {
+				return nil, fmt.Errorf("nitrotpm verification: %w", err)
 			}
+			parsed.nitroTPMDoc = doc
 			nitroTPMBlob = ev.Blob
 		case "sevsnp":
 			var snpReportData [64]byte
@@ -263,17 +282,21 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 			} else {
 				snpReportData = digest
 			}
-			if _, err := sevsnp.VerifyEvidence(ev.Blob, snpReportData, now); err != nil {
-				return fmt.Errorf("sevsnp verification: %w", err)
+			report, err := sevsnp.VerifyEvidence(ev.Blob, snpReportData, now)
+			if err != nil {
+				return nil, fmt.Errorf("sevsnp verification: %w", err)
 			}
+			parsed.sevSNPReport = report
 		case "tdx":
-			if _, err := tdx.VerifyEvidence(ev.Blob, digest, now); err != nil {
-				return fmt.Errorf("tdx verification: %w", err)
+			quote, err := tdx.VerifyEvidence(ev.Blob, digest, now)
+			if err != nil {
+				return nil, fmt.Errorf("tdx verification: %w", err)
 			}
+			parsed.tdxQuote = quote
 		default:
-			return fmt.Errorf("unknown evidence kind %q", ev.Kind)
+			return nil, fmt.Errorf("unknown evidence kind %q", ev.Kind)
 		}
 	}
 
-	return nil
+	return parsed, nil
 }

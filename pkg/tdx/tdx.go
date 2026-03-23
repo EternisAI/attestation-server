@@ -2,7 +2,6 @@ package tdx
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -102,18 +101,6 @@ func (t *Device) GetEvidence(reportData [64]byte) ([]byte, error) {
 		return nil, fmt.Errorf("tdx quote request failed: %w", err)
 	}
 	return rawQuote, nil
-}
-
-// SelfAttest performs an attestation with random report data and verifies the
-// result. It should be called once at startup to catch environment issues
-// early (e.g. missing ConfigFS support, broken QE).
-func (t *Device) SelfAttest() error {
-	var reportData [64]byte
-	if _, err := rand.Read(reportData[:]); err != nil {
-		return fmt.Errorf("generating random report data: %w", err)
-	}
-	_, _, err := t.Attest(reportData)
-	return err
 }
 
 // VerifyEvidence parses the raw quote, verifies the ECDSA-P256 signature and

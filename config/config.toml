@@ -29,6 +29,15 @@ env = []  # optional; environment variable names to include
 [secure_boot]
 enforce = false
 
+[endorsements]
+dnssec = false  # require DNSSEC validation for endorsement URL hosts
+
+[endorsements.client]
+timeout = "10s"  # overall fetch timeout with retries
+
+[endorsements.cache]
+size = "100MiB"  # max memory for endorsement document cache
+
 [dependencies]
 # URLs of dependency attestation servers whose reports are fetched,
 # verified, and included in this server's response. HTTPS endpoints

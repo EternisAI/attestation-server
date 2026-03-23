@@ -63,6 +63,9 @@ func initConfig() {
 	viper.SetDefault("tpm.enabled", false)
 	viper.SetDefault("tpm.algorithm", "sha384")
 	viper.SetDefault("dependencies.endpoints", []string{})
+	viper.SetDefault("endorsements.dnssec", false)
+	viper.SetDefault("endorsements.client.timeout", "10s")
+	viper.SetDefault("endorsements.cache.size", "100MiB")
 
 	// Explicit environment variable bindings (avoids AutomaticEnv underscore ambiguity)
 	_ = viper.BindEnv("log.format", "ATTESTATION_SERVER_LOG_FORMAT")
@@ -86,6 +89,9 @@ func initConfig() {
 	_ = viper.BindEnv("tpm.enabled", "ATTESTATION_SERVER_TPM_ENABLED")
 	_ = viper.BindEnv("tpm.algorithm", "ATTESTATION_SERVER_TPM_ALGORITHM")
 	_ = viper.BindEnv("dependencies.endpoints", "ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS")
+	_ = viper.BindEnv("endorsements.dnssec", "ATTESTATION_SERVER_ENDORSEMENTS_DNSSEC")
+	_ = viper.BindEnv("endorsements.client.timeout", "ATTESTATION_SERVER_ENDORSEMENTS_CLIENT_TIMEOUT")
+	_ = viper.BindEnv("endorsements.cache.size", "ATTESTATION_SERVER_ENDORSEMENTS_CACHE_SIZE")
 
 	// Config file resolution: flag > env var > fallback paths
 	explicit := true

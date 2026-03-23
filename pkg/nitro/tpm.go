@@ -2,7 +2,6 @@ package nitro
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -137,18 +136,6 @@ func (n *TPM) GetEvidence(nonce []byte) ([]byte, error) {
 		return nil, fmt.Errorf("nsm response missing attestation document")
 	}
 	return resp.Attestation.Document, nil
-}
-
-// SelfAttest performs an attestation with a random nonce and verifies the
-// result. It should be called once at startup to catch environment issues
-// early (e.g. tampered firmware, broken device).
-func (n *TPM) SelfAttest() error {
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
-		return fmt.Errorf("generating random nonce: %w", err)
-	}
-	_, _, err := n.Attest(nonce)
-	return err
 }
 
 // nvDefineSpace allocates an NV index for the NSM request/response buffer.

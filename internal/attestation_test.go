@@ -597,7 +597,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
-		if err := verifyDependencyReport(&report, nonceHex, aPrivateFP, now); err != nil {
+		if err := verifyDependencyReportOnly(&report, nonceHex, aPrivateFP, now); err != nil {
 			t.Fatalf("verifyDependencyReport() error: %v", err)
 		}
 	})
@@ -644,7 +644,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err := json.Unmarshal(f.Report.Dependencies[1], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
-		if err := verifyDependencyReport(&report, nonceHex, aPrivateFP, now); err != nil {
+		if err := verifyDependencyReportOnly(&report, nonceHex, aPrivateFP, now); err != nil {
 			t.Fatalf("verifyDependencyReport() error: %v", err)
 		}
 	})
@@ -712,7 +712,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err := json.Unmarshal(deps[0].Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing nested dependency: %v", err)
 		}
-		if err := verifyDependencyReport(&report, bNonceHex, bPrivateFP, now); err != nil {
+		if err := verifyDependencyReportOnly(&report, bNonceHex, bPrivateFP, now); err != nil {
 			t.Fatalf("verifyDependencyReport() error: %v", err)
 		}
 	})
@@ -725,7 +725,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 			t.Fatalf("parsing dependency: %v", err)
 		}
 		// Nonce check fires before client cert check, so the fingerprint is irrelevant here.
-		err := verifyDependencyReport(&report, "0000000000000000", aPrivateFP, now)
+		err := verifyDependencyReportOnly(&report, "0000000000000000", aPrivateFP, now)
 		if err == nil {
 			t.Fatal("verifyDependencyReport() should fail with wrong nonce")
 		}
@@ -741,7 +741,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		if err := json.Unmarshal(deps[0].Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing transitive dependency: %v", err)
 		}
-		err := verifyDependencyReport(&report, nonceHex, bPrivateFP, now)
+		err := verifyDependencyReportOnly(&report, nonceHex, bPrivateFP, now)
 		if err == nil {
 			t.Fatal("verifyDependencyReport() should fail when using A's nonce for transitive C")
 		}
@@ -755,7 +755,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 			t.Fatalf("parsing dependency: %v", err)
 		}
 		wrongFP := "0000000000000000000000000000000000000000000000000000000000000000"
-		err := verifyDependencyReport(&report, nonceHex, wrongFP, now)
+		err := verifyDependencyReportOnly(&report, nonceHex, wrongFP, now)
 		if err == nil {
 			t.Fatal("expected error for wrong client cert FP")
 		}
@@ -779,7 +779,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		depReport.Data = json.RawMessage(tamperedData)
 
 		// Nonce will still match but client cert is missing — e2e error.
-		err := verifyDependencyReport(&depReport, nonceHex, aPrivateFP, now)
+		err := verifyDependencyReportOnly(&depReport, nonceHex, aPrivateFP, now)
 		if err == nil {
 			t.Fatal("expected error for missing client cert in tampered dep")
 		}
@@ -805,7 +805,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		tamperedDataJSON, _ := json.Marshal(depData)
 		depReport.Data = json.RawMessage(tamperedDataJSON)
 
-		err := verifyDependencyReport(&depReport, nonceHex, tamperedFP, now)
+		err := verifyDependencyReportOnly(&depReport, nonceHex, tamperedFP, now)
 		if err == nil {
 			t.Fatal("expected crypto verification failure for tampered data")
 		}

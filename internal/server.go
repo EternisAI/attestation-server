@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -22,23 +23,26 @@ import (
 	"github.com/eternisai/attestation-server/pkg/nitro"
 	"github.com/eternisai/attestation-server/pkg/sevsnp"
 	"github.com/eternisai/attestation-server/pkg/tdx"
+	"github.com/eternisai/attestation-server/pkg/tpm"
 )
 
 // Server wraps a Fiber application with its dependencies.
 type Server struct {
-	ctx          context.Context
-	app          *fiber.App
-	cfg          *Config
-	logger       *slog.Logger
-	buildInfo    *BuildInfo
-	endorsements []*url.URL
-	certs        tlsCertificates
-	nitroNSM     *nitro.NSM
-	nitroTPM     *nitro.TPM
-	sevSNP       *sevsnp.Device
-	tdxDev       *tdx.Device
-	secureBoot   *bool
-	instanceID   string // random ID for dependency cycle detection via X-Attestation-Path
+	ctx             context.Context
+	app             *fiber.App
+	cfg             *Config
+	logger          *slog.Logger
+	buildInfo       *BuildInfo
+	endorsements    []*url.URL
+	certs           tlsCertificates
+	nitroNSM        *nitro.NSM
+	nitroTPM        *nitro.TPM
+	sevSNP          *sevsnp.Device
+	tdxDev          *tdx.Device
+	secureBoot      *bool
+	instanceID      string // deterministic ID for dependency cycle detection via X-Attestation-Path
+	selfAttestation *parsedSelfAttestation
+	endCache        *endorsementCache
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -122,16 +126,24 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		}
 	}
 
+	s.selfAttestation = &parsedSelfAttestation{}
+
 	if cfg.ReportEvidence.NitroNSM {
 		nsmDev, err := nitro.OpenNSM()
 		if err != nil {
 			return nil, fmt.Errorf("opening nitro nsm: %w", err)
 		}
 		start := time.Now()
-		if err := nsmDev.SelfAttest(); err != nil {
+		nonce := make([]byte, 32)
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, fmt.Errorf("generating random nonce: %w", err)
+		}
+		_, doc, err := nsmDev.Attest(nonce)
+		if err != nil {
 			return nil, fmt.Errorf("nitro nsm self-attestation: %w", err)
 		}
 		s.nitroNSM = nsmDev
+		s.selfAttestation.nitroNSMDoc = doc
 		logger.Info("opened and verified nitro nsm session", "duration_ms", time.Since(start).Milliseconds())
 	}
 
@@ -141,10 +153,16 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 			return nil, fmt.Errorf("opening nitro tpm: %w", err)
 		}
 		start := time.Now()
-		if err := tpmDev.SelfAttest(); err != nil {
+		nonce := make([]byte, 32)
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, fmt.Errorf("generating random nonce: %w", err)
+		}
+		_, doc, err := tpmDev.Attest(nonce)
+		if err != nil {
 			return nil, fmt.Errorf("nitro tpm self-attestation: %w", err)
 		}
 		s.nitroTPM = tpmDev
+		s.selfAttestation.nitroTPMDoc = doc
 		logger.Info("opened and verified nitro tpm device", "duration_ms", time.Since(start).Milliseconds())
 	}
 
@@ -154,10 +172,16 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 			return nil, fmt.Errorf("opening sev-snp device: %w", err)
 		}
 		start := time.Now()
-		if err := snp.SelfAttest(cfg.ReportEvidence.SEVSNPVMPL); err != nil {
+		var reportData [64]byte
+		if _, err := rand.Read(reportData[:]); err != nil {
+			return nil, fmt.Errorf("generating random report data: %w", err)
+		}
+		_, report, err := snp.Attest(reportData, cfg.ReportEvidence.SEVSNPVMPL)
+		if err != nil {
 			return nil, fmt.Errorf("sev-snp self-attestation: %w", err)
 		}
 		s.sevSNP = snp
+		s.selfAttestation.sevSNPReport = report
 		logger.Info("opened and verified sev-snp guest device", "duration_ms", time.Since(start).Milliseconds())
 	}
 
@@ -167,11 +191,37 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 			return nil, fmt.Errorf("opening tdx device: %w", err)
 		}
 		start := time.Now()
-		if err := tdxDev.SelfAttest(); err != nil {
+		var reportData [64]byte
+		if _, err := rand.Read(reportData[:]); err != nil {
+			return nil, fmt.Errorf("generating random report data: %w", err)
+		}
+		_, quote, err := tdxDev.Attest(reportData)
+		if err != nil {
 			return nil, fmt.Errorf("tdx self-attestation: %w", err)
 		}
 		s.tdxDev = tdxDev
+		s.selfAttestation.tdxQuote = quote
 		logger.Info("opened and verified tdx guest device", "duration_ms", time.Since(start).Milliseconds())
+	}
+
+	if cfg.TPM.Enabled {
+		pcrs, err := tpm.ReadPCRs(cfg.TPM.Algorithm)
+		if err != nil {
+			return nil, fmt.Errorf("reading tpm pcrs for self-attestation: %w", err)
+		}
+		s.selfAttestation.tpmPCRs = pcrs
+	}
+
+	if len(s.endorsements) > 0 {
+		cache, err := newEndorsementCache(cfg.EndorsementCacheSize)
+		if err != nil {
+			return nil, err
+		}
+		s.endCache = cache
+		if err := s.validateOwnEndorsements(context.Background()); err != nil {
+			return nil, fmt.Errorf("endorsement validation: %w", err)
+		}
+		logger.Info("validated endorsements against self-attestation evidence")
 	}
 
 	if len(cfg.DependencyEndpoints) > 0 {

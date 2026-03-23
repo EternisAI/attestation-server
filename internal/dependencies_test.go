@@ -84,7 +84,7 @@ func TestVerifyDependencyReport_NonceMismatch(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err = verifyDependencyReport(report, "different-nonce", testClientFP, time.Now())
+	err = verifyDependencyReportOnly(report, "different-nonce", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for nonce mismatch, got nil")
 	}
@@ -101,7 +101,7 @@ func TestVerifyDependencyReport_EmptyEvidence(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReport(report, "abc123", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "abc123", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for empty evidence, got nil")
 	}
@@ -118,7 +118,7 @@ func TestVerifyDependencyReport_NilEvidence(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReport(report, "abc123", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "abc123", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for nil evidence, got nil")
 	}
@@ -136,7 +136,7 @@ func TestVerifyDependencyReport_UnknownEvidenceKind(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReport(report, nonceHex, testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, nonceHex, testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for unknown evidence kind, got nil")
 	}
@@ -151,7 +151,7 @@ func TestVerifyDependencyReport_InvalidDataJSON(t *testing.T) {
 		Data:     json.RawMessage(`not valid json`),
 	}
 
-	err := verifyDependencyReport(report, "anything", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "anything", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for invalid data JSON, got nil")
 	}
@@ -168,7 +168,7 @@ func TestVerifyDependencyReport_MissingClientCert(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReport(report, "aabb", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for missing client cert, got nil")
 	}
@@ -195,7 +195,7 @@ func TestVerifyDependencyReport_ClientCertMismatch(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReport(report, "aabb", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for client cert mismatch, got nil")
 	}

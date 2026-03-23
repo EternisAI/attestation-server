@@ -16,6 +16,7 @@ cmd/root.go                # cobra root command; initializes config, logger, and
 internal/attestation.go    # GET /api/v1/attestation handler and helpers (package app)
 internal/config.go         # Config struct and LoadConfig() (package app)
 internal/dependencies.go   # Transitive dependency attestation: parallel fetch, verify, cycle detection (package app)
+internal/endorsements.go   # Endorsement document fetching, caching, DNSSEC, measurement validation (package app)
 internal/logging.go        # NewLogger() (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS certificate/CA loading, verification, and hot-reload (package app)
@@ -74,6 +75,15 @@ env = []
 [secure_boot]
 enforce = false
 
+[endorsements]
+dnssec = false
+
+[endorsements.client]
+timeout = "10s"
+
+[endorsements.cache]
+size = "100MiB"
+
 [dependencies]
 endpoints = []
 
@@ -125,6 +135,9 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_SECURE_BOOT_ENFORCE` | `secure_boot.enforce` | `false` | Enforce UEFI Secure Boot; exit on startup if not enabled. UEFI secure boot detection is skipped when NitroNSM evidence is enabled (enclaves have no EFI firmware; boot integrity is proven by NSM PCR measurements) |
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Comma-separated environment variable names to include in report (unique) |
 | `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints are verified against the private CA bundle (mTLS); HTTP endpoints must be proxied through a local mTLS-enabling proxy |
+| `ATTESTATION_SERVER_ENDORSEMENTS_DNSSEC` | `endorsements.dnssec` | `false` | Require strict DNSSEC validation for endorsement URL hosts |
+| `ATTESTATION_SERVER_ENDORSEMENTS_CLIENT_TIMEOUT` | `endorsements.client.timeout` | `10s` | Overall timeout for fetching endorsement documents (with retries) |
+| `ATTESTATION_SERVER_ENDORSEMENTS_CACHE_SIZE` | `endorsements.cache.size` | `100MiB` | Maximum memory for the endorsement document cache (ristretto) |
 
 List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS`) support comma-separated values: `VAR=a,b,c`. Spaces around commas are trimmed.
 
@@ -150,7 +163,6 @@ Each TEE package (`pkg/nitro`, `pkg/sevsnp`, `pkg/tdx`) exposes a consistent set
 | `GetEvidence` | Retrieve raw evidence from the device without verification |
 | `VerifyEvidence` | Verify a raw evidence blob (standalone, no device needed) |
 | `Attest` | Combined retrieval + verification (calls `GetEvidence` then `VerifyEvidence`) |
-| `SelfAttest` | Attest with a random nonce/report data; used at startup to catch environment issues early |
 
 The `sevsnp` package additionally exports `SplitEvidence` (split a blob into raw report + certificate table) and `ReportSize` (the raw report size constant).
 
@@ -165,7 +177,7 @@ The `sevsnp` package additionally exports `SplitEvidence` (split a blob into raw
 
 ### SEV-SNP performance: certificate buffer caching
 
-`GetEvidence` (and by extension `Attest`) caches the certificate table size after the first call. The go-sev-guest library's `GetRawExtendedReportAtVmpl` performs two ioctls per call (probe for cert buffer size + actual attestation), and the library's self-throttle inserts a ~2 s sleep between ioctls. By caching the cert size, subsequent calls use a single ioctl via `getExtendedReportDirect`, eliminating one PSP firmware round-trip and one throttle delay. The `SelfAttest` call at startup primes this cache.
+`GetEvidence` (and by extension `Attest`) caches the certificate table size after the first call. The go-sev-guest library's `GetRawExtendedReportAtVmpl` performs two ioctls per call (probe for cert buffer size + actual attestation), and the library's self-throttle inserts a ~2 s sleep between ioctls. By caching the cert size, subsequent calls use a single ioctl via `getExtendedReportDirect`, eliminating one PSP firmware round-trip and one throttle delay. The startup self-attestation `Attest` call primes this cache.
 
 ## Attestation handler
 
@@ -173,7 +185,7 @@ The handler calls `Attest` on each configured TEE device. Each `Attest` method r
 
 ### Startup self-attestation
 
-During server initialization (`NewServer`), each opened TEE device is self-attested via `SelfAttest` with random nonce/report data. This catches environment issues early (tampered firmware, broken devices) and — for SEV-SNP — primes the certificate buffer cache. The server exits on any self-attestation failure.
+During server initialization (`NewServer`), each opened TEE device is self-attested by calling `Attest` with random nonce/report data. The parsed results are captured in `parsedSelfAttestation` for endorsement validation. This catches environment issues early (tampered firmware, broken devices), primes the SEV-SNP certificate buffer cache, and provides the baseline measurements for endorsement checks. The server exits on any self-attestation failure.
 
 ## Transitive dependency attestation
 
@@ -208,6 +220,41 @@ The dependency HTTP client is hardened against slowloris-like attacks with per-p
 ### Certificate hot-reload
 
 Certificate files (public cert/key, private cert/key, and private CA bundle) are hot-reloaded via fsnotify directory watchers. Since `validateTLSConfig` requires the CA bundle to be in the same directory as the private cert/key, a single watcher covers all three files. On reload, the private cert, CA bundle, and computed fingerprints are swapped atomically under the same `sync.RWMutex` (`tlsCertificates.mu`) that protects concurrent reads from request handlers and the dependency HTTP client.
+
+## Endorsement validation
+
+When `paths.endorsements` is configured with endorsement URLs, the server fetches and validates endorsement documents containing golden measurement values for each configured evidence type.
+
+### Endorsement document format
+
+A JSON object with evidence-type keys (`nitronsm`, `nitrotpm`, `sevsnp`, `tdx`, `tpm`):
+- **NitroNSM/NitroTPM/TPM**: `{"Measurements": {"HashAlgorithm": "...", "PCR0": "hex", ...}}`
+- **SEV-SNP**: a single hex string (96 chars = 384-bit launch measurement)
+- **TDX**: `{"MRTD": "hex", "RTMR0": "hex", "RTMR1": "hex", "RTMR2": "hex"}` (all optional)
+
+### Startup validation
+
+During `NewServer()`, after self-attestation (which now captures parsed results instead of discarding them), the server:
+1. Fetches endorsement documents from all configured URLs in parallel with retry
+2. Verifies all documents are byte-for-byte identical
+3. Validates each configured evidence type against the golden measurements
+4. Exits on any failure (missing measurements, mismatches, fetch errors)
+
+### Per-request revalidation
+
+Before collecting own evidence in `handleAttestation`, the handler calls `validateOwnEndorsements`. On cache hit this is fast (pointer lookup + comparison). On cache miss (TTL expired) it re-fetches and revalidates. If revalidation fails, the handler returns 500 but the server stays up and self-heals when endorsements become available.
+
+### Dependency endorsement validation
+
+After cryptographically verifying a dependency's attestation report, the server also validates the dependency's endorsement URLs (from `reportData.Endorsements`) against the evidence in the dependency report. The shared ristretto cache is used across own and dependency endorsements.
+
+### Endorsement HTTP client
+
+Uses system/Mozilla root CAs (via `golang.org/x/crypto/x509roots/fallback` blank import). Hardened with per-phase timeouts (dial 3s, TLS 5s, headers 5s), 1 MiB body limit, disabled keep-alives. When `endorsements.dnssec` is enabled, a DNSSEC-validating resolver (via `github.com/miekg/dns`) is wired into the transport, requiring the AD flag on DNS responses (strict mode).
+
+### Endorsement cache
+
+Uses `dgraph-io/ristretto/v2` with URL-string keys. When multiple URLs resolve to the same document (verified byte-for-byte), the same `*EndorsementDocument` pointer is stored under all URL keys (cost charged once). TTL is derived from Cache-Control `max-age` (capped at 24h, default 30m).
 
 ## Testing
 

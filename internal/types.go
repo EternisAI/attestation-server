@@ -1,9 +1,16 @@
 package app
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/goccy/go-json"
+	spb "github.com/google/go-sev-guest/proto/sevsnp"
+	pb "github.com/google/go-tdx-guest/proto/tdx"
 
 	"github.com/eternisai/attestation-server/pkg/hexbytes"
+	"github.com/eternisai/attestation-server/pkg/nitro"
 )
 
 // Fields sourced from: https://github.com/sigstore/fulcio/blob/v1.8.5/pkg/certificate/extensions.go#L60
@@ -110,4 +117,84 @@ type TLSReportData struct {
 type TLSCertificateData struct {
 	CertificateFingerprint string `json:"certificate"`
 	PublicKeyFingerprint   string `json:"public_key,omitempty"`
+}
+
+// EndorsementDocument holds golden measurement values keyed by evidence type.
+// The JSON keys match the evidence kind strings used in attestation reports.
+type EndorsementDocument struct {
+	NitroNSM *PCREndorsement `json:"nitronsm,omitempty"`
+	NitroTPM *PCREndorsement `json:"nitrotpm,omitempty"`
+	SEVSNP   *string         `json:"sevsnp,omitempty"`
+	TDX      *TDXEndorsement `json:"tdx,omitempty"`
+	TPM      *PCREndorsement `json:"tpm,omitempty"`
+}
+
+// PCREndorsement wraps the "Measurements" object used by NitroNSM, NitroTPM,
+// and generic TPM endorsements.
+type PCREndorsement struct {
+	Measurements PCRGoldenValues `json:"Measurements"`
+}
+
+// PCRGoldenValues holds a hash algorithm identifier and a set of PCR index →
+// hex-encoded golden value pairs. The JSON representation uses dynamic keys
+// ("HashAlgorithm", "PCR0", "PCR1", …, "PCR24") which are handled by a
+// custom UnmarshalJSON.
+type PCRGoldenValues struct {
+	HashAlgorithm string
+	PCRs          map[int]string
+}
+
+// UnmarshalJSON parses a JSON object with "HashAlgorithm" and dynamic "PCR\d+"
+// keys into the PCRGoldenValues struct.
+func (v *PCRGoldenValues) UnmarshalJSON(data []byte) error {
+	var raw map[string]string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	v.HashAlgorithm = raw["HashAlgorithm"]
+	v.PCRs = make(map[int]string)
+	for key, val := range raw {
+		if key == "HashAlgorithm" || val == "" {
+			continue
+		}
+		if !strings.HasPrefix(key, "PCR") {
+			continue
+		}
+		idx, err := strconv.Atoi(key[3:])
+		if err != nil {
+			return fmt.Errorf("invalid PCR key %q: %w", key, err)
+		}
+		if idx < 0 || idx > 24 {
+			return fmt.Errorf("PCR index %d out of range 0-24", idx)
+		}
+		v.PCRs[idx] = val
+	}
+	return nil
+}
+
+// TDXEndorsement holds TDX-specific golden measurements. All fields are
+// optional; only present fields are validated.
+type TDXEndorsement struct {
+	MRTD  string `json:"MRTD,omitempty"`
+	RTMR0 string `json:"RTMR0,omitempty"`
+	RTMR1 string `json:"RTMR1,omitempty"`
+	RTMR2 string `json:"RTMR2,omitempty"`
+}
+
+// parsedSelfAttestation holds parsed results from startup self-attestation,
+// used for endorsement validation against golden measurements.
+type parsedSelfAttestation struct {
+	nitroNSMDoc  *nitro.AttestationDocument
+	nitroTPMDoc  *nitro.AttestationDocument
+	sevSNPReport *spb.Report
+	tdxQuote     *pb.QuoteV4
+	tpmPCRs      map[int]hexbytes.Bytes
+}
+
+// parsedDependencyEvidence holds parsed evidence from a verified dependency report.
+type parsedDependencyEvidence struct {
+	nitroNSMDoc  *nitro.AttestationDocument
+	nitroTPMDoc  *nitro.AttestationDocument
+	sevSNPReport *spb.Report
+	tdxQuote     *pb.QuoteV4
 }

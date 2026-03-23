@@ -2,7 +2,6 @@ package sevsnp
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
@@ -71,19 +70,6 @@ func (s *Device) Attest(reportData [64]byte, vmpl int) ([]byte, *spb.Report, err
 	}
 
 	return blob, report, nil
-}
-
-// SelfAttest performs an attestation with random report data and verifies the
-// result. It should be called once at startup to catch environment issues early
-// (e.g. tampered firmware, broken device) and to cache the certificate table
-// size for subsequent Attest calls.
-func (s *Device) SelfAttest(vmpl int) error {
-	var reportData [64]byte
-	if _, err := rand.Read(reportData[:]); err != nil {
-		return fmt.Errorf("generating random report data: %w", err)
-	}
-	_, _, err := s.Attest(reportData, vmpl)
-	return err
 }
 
 // GetEvidence retrieves the raw SEV-SNP attestation report and certificate
