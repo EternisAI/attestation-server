@@ -145,7 +145,7 @@ func dnssecLookup(ctx context.Context, host string) error {
 
 	r, _, err := c.ExchangeContext(ctx, m, "1.1.1.1:53")
 	if err != nil {
-		return fmt.Errorf("DNSSEC lookup for %s: %w", host, err)
+		return classifyNetError(fmt.Errorf("DNSSEC lookup for %s: %w", host, err))
 	}
 	if r.Rcode == dns.RcodeServerFailure {
 		return fmt.Errorf("DNSSEC validation failed for %s (SERVFAIL)", host)
@@ -332,7 +332,7 @@ func fetchOnce(ctx context.Context, client *http.Client, u *url.URL) ([]byte, ht
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, classifyNetError(err)
 	}
 	defer resp.Body.Close()
 
@@ -342,7 +342,7 @@ func fetchOnce(ctx context.Context, client *http.Client, u *url.URL) ([]byte, ht
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, endorsementMaxResponseBytes))
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading response: %w", err)
+		return nil, nil, classifyNetError(fmt.Errorf("reading response: %w", err))
 	}
 
 	return body, resp.Header, nil

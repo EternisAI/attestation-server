@@ -26,6 +26,57 @@ import (
 // of returning a generic 500.
 var errDependencyCycle = errors.New("dependency cycle detected")
 
+// errTimeout indicates a timeout connecting to or reading from an upstream
+// server. The handler maps this to HTTP 504 Gateway Timeout.
+type errTimeout struct{ err error }
+
+func (e *errTimeout) Error() string { return e.err.Error() }
+func (e *errTimeout) Unwrap() error { return e.err }
+
+// errConnection indicates a non-timeout connection error with an upstream
+// server (connection refused, reset, TLS failure). The handler maps this
+// to HTTP 503 Service Unavailable.
+type errConnection struct{ err error }
+
+func (e *errConnection) Error() string { return e.err.Error() }
+func (e *errConnection) Unwrap() error { return e.err }
+
+// classifyNetError wraps an HTTP client error as *errTimeout or
+// *errConnection based on the underlying cause. Errors that don't match
+// either category (e.g. context.Canceled) are returned as-is.
+func classifyNetError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &errTimeout{err: err}
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return &errTimeout{err: err}
+	}
+	var urlErr *url.Error
+	var opErr *net.OpError
+	if errors.As(err, &urlErr) || errors.As(err, &opErr) {
+		return &errConnection{err: err}
+	}
+	return err
+}
+
+// wrapUpstreamError preserves the *errTimeout/*errConnection classification
+// from cause while replacing the user-facing message.
+func wrapUpstreamError(cause error, msg string) error {
+	var te *errTimeout
+	if errors.As(cause, &te) {
+		return &errTimeout{err: errors.New(msg)}
+	}
+	var ce *errConnection
+	if errors.As(cause, &ce) {
+		return &errConnection{err: errors.New(msg)}
+	}
+	return errors.New(msg)
+}
+
 const (
 	// depClientTimeout is the overall timeout for a single dependency request,
 	// covering DNS, connect, TLS handshake, headers, and body transfer.
@@ -80,7 +131,7 @@ func (s *Server) fetchDependencies(nonceHex, requestID, attestationPath string) 
 				if errors.Is(err, errDependencyCycle) {
 					return errDependencyCycle
 				}
-				return fmt.Errorf("dependency attestation failed")
+				return wrapUpstreamError(err, "dependency attestation failed")
 			}
 			s.logger.Debug("dependency attestation complete", "endpoint", ep.String(), "duration_ms", time.Since(depStart).Milliseconds(), "request_id", requestID)
 			results[i] = raw
@@ -150,7 +201,7 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, classifyNetError(fmt.Errorf("request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
@@ -163,7 +214,7 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, depMaxResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
+		return nil, classifyNetError(fmt.Errorf("reading response: %w", err))
 	}
 
 	var report AttestationReport
@@ -188,7 +239,7 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 	if err := s.validateDependencyEndorsements(ctx, &report, parsed); err != nil {
 		s.logger.Error("dependency endorsement validation failed",
 			"endpoint", endpoint.String(), "request_id", requestID, "error", err)
-		return nil, fmt.Errorf("dependency endorsement validation failed")
+		return nil, wrapUpstreamError(err, "dependency endorsement validation failed")
 	}
 
 	return json.RawMessage(body), nil

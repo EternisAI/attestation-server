@@ -153,14 +153,14 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if errors.Is(err, errDependencyCycle) {
 			return fiber.NewError(fiber.StatusConflict, "dependency cycle detected")
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		return fiber.NewError(upstreamErrorCode(err), err.Error())
 	}
 
 	// Validate own endorsements (cached fast-path or re-fetch on TTL expiry).
 	if len(s.endorsements) > 0 {
 		if err := s.validateOwnEndorsements(c.UserContext()); err != nil {
 			s.logger.Error("endorsement validation failed", "request_id", requestID, "error", err)
-			return fiber.NewError(fiber.StatusInternalServerError, "endorsement validation failed")
+			return fiber.NewError(upstreamErrorCode(err), "endorsement validation failed")
 		}
 	}
 
@@ -246,6 +246,20 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		Dependencies: deps,
 	}
 	return sendReport(c, report, reportDataJSON)
+}
+
+// upstreamErrorCode returns the appropriate HTTP status code for an upstream
+// error: 504 for timeouts, 503 for connection errors, 500 for everything else.
+func upstreamErrorCode(err error) int {
+	var te *errTimeout
+	if errors.As(err, &te) {
+		return fiber.StatusGatewayTimeout
+	}
+	var ce *errConnection
+	if errors.As(err, &ce) {
+		return fiber.StatusServiceUnavailable
+	}
+	return fiber.StatusInternalServerError
 }
 
 // sendReport marshals the AttestationReport with the same settings used
