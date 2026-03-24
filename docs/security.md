@@ -168,6 +168,8 @@ Both the dependency client and endorsement/cosign fetch client are hardened agai
 
 Keep-alives are disabled on both clients. For dependencies, this ensures every request gets a fresh TLS handshake so certificate rotation is respected. For endorsements, it avoids tying up sockets across the TTL-driven refetch interval.
 
+Endorsement and cosign signature fetches use exponential backoff retry until the context deadline. Each failed attempt is logged at WARN level with the URL, attempt number, and specific error (DNS failure, TLS handshake error, HTTP status code, etc.) so that the root cause is visible even when the final error is "context deadline exceeded".
+
 The dependency client enforces TLS 1.3 minimum for service-to-service mTLS. The endorsement client uses TLS 1.2 minimum since public CDNs may not yet support TLS 1.3.
 
 ## Rate limiting

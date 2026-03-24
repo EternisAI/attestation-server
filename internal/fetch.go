@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -163,17 +164,25 @@ type fetchResult struct {
 }
 
 // fetchWithRetry fetches a URL with exponential backoff retry until the
-// context deadline.
-func fetchWithRetry(ctx context.Context, client *http.Client, u *url.URL) ([]byte, http.Header, error) {
+// context deadline. Each failed attempt is logged at WARN level so that
+// the underlying cause (DNS, TLS, HTTP status, etc.) is visible even
+// when the final error is just "context deadline exceeded".
+func fetchWithRetry(ctx context.Context, client *http.Client, u *url.URL, logger *slog.Logger) ([]byte, http.Header, error) {
 	backoff := fetchRetryInitial
 	var lastErr error
+	attempt := 0
 
 	for {
+		attempt++
 		body, header, err := fetchOnce(ctx, client, u)
 		if err == nil {
 			return body, header, nil
 		}
 		lastErr = err
+
+		if logger != nil {
+			logger.Warn("fetch attempt failed", "url", u.String(), "attempt", attempt, "error", err)
+		}
 
 		if ctx.Err() != nil {
 			return nil, nil, lastErr

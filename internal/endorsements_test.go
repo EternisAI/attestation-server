@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -860,7 +861,7 @@ func TestFetchWithRetry_RetriesOnError(t *testing.T) {
 	defer cancel()
 
 	u, _ := url.Parse(srv.URL + "/e.json")
-	body, _, err := fetchWithRetry(ctx, srv.Client(), u)
+	body, _, err := fetchWithRetry(ctx, srv.Client(), u, slog.Default())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -882,7 +883,7 @@ func TestFetchWithRetry_ContextCancelled(t *testing.T) {
 	defer cancel()
 
 	u, _ := url.Parse(srv.URL + "/e.json")
-	_, _, err := fetchWithRetry(ctx, srv.Client(), u)
+	_, _, err := fetchWithRetry(ctx, srv.Client(), u, slog.Default())
 	if err == nil {
 		t.Fatal("expected error when context expires")
 	}
