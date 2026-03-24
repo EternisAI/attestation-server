@@ -96,7 +96,10 @@ func (s *Server) fetchHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: s.cfg.EndorsementClientTimeout,
 		Transport: &http.Transport{
-			TLSClientConfig:       &tls.Config{RootCAs: roots},
+			// TLS 1.2 minimum for public CDN/endorsement fetches (some
+			// public servers may not support TLS 1.3). The dependency mTLS
+			// client uses TLS 1.3 minimum (see dependencyHTTPClient).
+			TLSClientConfig:       &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 			TLSHandshakeTimeout:   fetchTLSHandshakeTimeout,
 			ResponseHeaderTimeout: fetchResponseHeaderTimeout,
 			DialContext:           dialer.DialContext,

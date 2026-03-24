@@ -685,6 +685,66 @@ func contains(s, substr string) bool {
 	return len(substr) == 0 || len(s) >= len(substr) && searchString(s, substr)
 }
 
+func TestValidateDomainAllowlist(t *testing.T) {
+	tests := []struct {
+		name    string
+		domains []string
+		wantErr bool
+		errMsg  string
+	}{
+		{name: "empty list", domains: nil, wantErr: false},
+		{name: "valid single domain", domains: []string{"cdn.example.com"}, wantErr: false},
+		{name: "valid multiple domains", domains: []string{"a.example.com", "b.example.org"}, wantErr: false},
+		{name: "duplicate domain", domains: []string{"a.com", "a.com"}, wantErr: true, errMsg: "duplicate"},
+		{name: "invalid domain with port", domains: []string{"a.com:8080"}, wantErr: true, errMsg: "invalid domain"},
+		{name: "invalid domain with path", domains: []string{"a.com/path"}, wantErr: true, errMsg: "invalid domain"},
+		{name: "empty string entry", domains: []string{""}, wantErr: true, errMsg: "invalid domain"},
+		{name: "wildcard not allowed", domains: []string{"*.example.com"}, wantErr: true, errMsg: "invalid domain"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDomainAllowlist(tt.domains)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.errMsg != "" && !contains(err.Error(), tt.errMsg) {
+					t.Fatalf("error %q does not contain %q", err.Error(), tt.errMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckEndorsementDomain(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		allowed []string
+		wantErr bool
+	}{
+		{name: "empty allowlist permits all", host: "any.com", allowed: nil, wantErr: false},
+		{name: "exact match", host: "cdn.example.com", allowed: []string{"cdn.example.com"}, wantErr: false},
+		{name: "case insensitive match", host: "CDN.Example.COM", allowed: []string{"cdn.example.com"}, wantErr: false},
+		{name: "no match", host: "evil.com", allowed: []string{"cdn.example.com"}, wantErr: true},
+		{name: "subdomain does not match parent", host: "sub.cdn.example.com", allowed: []string{"cdn.example.com"}, wantErr: true},
+		{name: "parent does not match child", host: "example.com", allowed: []string{"cdn.example.com"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckEndorsementDomain(tt.host, tt.allowed)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func searchString(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

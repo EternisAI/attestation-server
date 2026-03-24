@@ -250,7 +250,7 @@ func newTestServer() *Server {
 	}
 }
 
-func TestErrorHandler_FiberError400(t *testing.T) {
+func TestErrorHandler_FiberError400_PreservesMessage(t *testing.T) {
 	s := newTestServer()
 	app := fiber.New(fiber.Config{
 		ErrorHandler: s.errorHandler,
@@ -271,23 +271,18 @@ func TestErrorHandler_FiberError400(t *testing.T) {
 	}
 
 	body, _ := io.ReadAll(resp.Body)
-	bodyStr := string(body)
-	if bodyStr == "" {
-		t.Fatal("empty response body")
-	}
-	// Verify response contains the error message
-	if got := bodyStr; got == "" {
-		t.Fatal("empty body")
+	if !contains(string(body), "bad request") {
+		t.Errorf("4xx response should preserve error message, got %s", body)
 	}
 }
 
-func TestErrorHandler_FiberError500(t *testing.T) {
+func TestErrorHandler_FiberError500_OpaqueMessage(t *testing.T) {
 	s := newTestServer()
 	app := fiber.New(fiber.Config{
 		ErrorHandler: s.errorHandler,
 	})
 	app.Get("/test", func(c *fiber.Ctx) error {
-		return fiber.NewError(fiber.StatusInternalServerError, "internal")
+		return fiber.NewError(fiber.StatusInternalServerError, "secret internal detail: /etc/firmware/v2.3")
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -303,18 +298,21 @@ func TestErrorHandler_FiberError500(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
-	if bodyStr == "" {
-		t.Fatal("empty response body")
+	if contains(bodyStr, "secret") || contains(bodyStr, "/etc/firmware") {
+		t.Errorf("5xx response should not leak internal details, got %s", bodyStr)
+	}
+	if !contains(bodyStr, "internal error") {
+		t.Errorf("5xx response should contain generic message, got %s", bodyStr)
 	}
 }
 
-func TestErrorHandler_PlainError(t *testing.T) {
+func TestErrorHandler_PlainError_OpaqueMessage(t *testing.T) {
 	s := newTestServer()
 	app := fiber.New(fiber.Config{
 		ErrorHandler: s.errorHandler,
 	})
 	app.Get("/test", func(c *fiber.Ctx) error {
-		return fmt.Errorf("something went wrong")
+		return fmt.Errorf("something went wrong: secret path /dev/sev-guest")
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -330,8 +328,11 @@ func TestErrorHandler_PlainError(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
-	if bodyStr == "" {
-		t.Fatal("empty response body")
+	if contains(bodyStr, "secret") || contains(bodyStr, "/dev/sev-guest") {
+		t.Errorf("5xx response should not leak internal details, got %s", bodyStr)
+	}
+	if !contains(bodyStr, "internal error") {
+		t.Errorf("5xx response should contain generic message, got %s", bodyStr)
 	}
 }
 

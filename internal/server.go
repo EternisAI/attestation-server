@@ -46,6 +46,7 @@ type Server struct {
 	selfAttestation  *parsedSelfAttestation
 	httpCache        *fetcherCache
 	sigstoreVerifier *verify.Verifier
+	rateLimiters     *rateLimiterMap
 	dnssecResolver   *dnssec.Resolver
 }
 
@@ -99,6 +100,15 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		endorsementStrs[i] = u.String()
 	}
 	logger.Debug("loaded endorsements", "count", len(endorsements), "urls", strings.Join(endorsementStrs, ","))
+
+	if len(endorsements) > 0 {
+		if !cfg.CosignVerify {
+			logger.Warn("cosign verification is disabled, endorsement documents are not cryptographically authenticated")
+		}
+		if len(cfg.EndorsementAllowedDomains) == 0 {
+			logger.Warn("endorsements.allowed_domains is empty, endorsement documents will be fetched from any domain including attacker-controlled URLs in dependency reports")
+		}
+	}
 
 	if err := validateTLSConfig(cfg); err != nil {
 		return nil, fmt.Errorf("TLS configuration: %w", err)
@@ -246,7 +256,7 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		s.httpCache = cache
 
 		if cfg.CosignVerify {
-			v, err := initSigstoreVerifier(logger)
+			v, err := initSigstoreVerifier(logger, cfg.CosignTUFCachePath)
 			if err != nil {
 				return nil, fmt.Errorf("cosign initialization: %w", err)
 			}
@@ -277,6 +287,13 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	s.app.Use(requestid.New(requestid.Config{
 		Generator: func() string { return uuid.NewString() },
 	}))
+	if cfg.RateLimitEnabled {
+		s.app.Use(s.rateLimitMiddleware())
+		logger.Info("rate limiting enabled for edge requests",
+			"rps", cfg.RateLimitRPS,
+			"burst", cfg.RateLimitBurst,
+			"stall_timeout", cfg.RateLimitStallTimeout.String())
+	}
 	s.app.Use(s.accessLog())
 	s.setupRoutes()
 
@@ -343,6 +360,10 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
+	if s.rateLimiters != nil {
+		go s.runRateLimitCleanup(ctx)
+	}
+
 	addr := fmt.Sprintf("%s:%d", s.cfg.BindHost, s.cfg.BindPort)
 
 	listenErr := make(chan error, 1)
@@ -369,13 +390,25 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 // errorHandler returns JSON-formatted error responses for all handler errors.
+// For 5xx errors, the response contains a generic message to avoid leaking
+// internal details (device errors, file paths, firmware codes). The real
+// error is logged at ERROR level for debugging. 4xx errors are returned
+// as-is since they describe client-fixable problems.
 func (s *Server) errorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
+	msg := "internal error"
 	var fiberErr *fiber.Error
 	if errors.As(err, &fiberErr) {
 		code = fiberErr.Code
+		if code < 500 {
+			msg = fiberErr.Message
+		}
 	}
-	return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+	if code >= 500 {
+		requestID, _ := c.Locals("requestid").(string)
+		s.logger.Error("request failed", "status", code, "error", err, "request_id", requestID)
+	}
+	return c.Status(code).JSON(fiber.Map{"error": msg})
 }
 
 // accessLog is a middleware that logs each request with method, path, status,

@@ -8,7 +8,6 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -105,8 +104,14 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	}
 	s.certs.mu.RUnlock()
 
-	// Extract client certificate fingerprint from XFCC header
+	// Extract client certificate fingerprint from XFCC header.
+	// Multiple entries (comma-separated) indicate proxy intermediaries,
+	// which break the direct e2e encryption guarantee.
 	if xfcc := c.Get("x-forwarded-client-cert"); xfcc != "" {
+		if strings.Contains(xfcc, ",") {
+			s.logger.Error("multiple XFCC entries detected, direct e2e encryption required without intermediaries", "request_id", requestID)
+			return fiber.NewError(fiber.StatusBadRequest, "multiple client certificate entries not supported")
+		}
 		if fp := extractXFCCHash(xfcc); fp != "" {
 			tlsData.Client = &TLSCertificateData{
 				CertificateFingerprint: fp,
@@ -119,7 +124,8 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		start := time.Now()
 		pcrs, err := tpm.ReadPCRs(s.cfg.TPM.Algorithm)
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tpm: %v", err))
+			s.logger.Error("tpm pcr read failed", "error", err, "request_id", requestID)
+			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 		}
 		s.logger.Debug("tpm pcr read complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		tpmData = &TPMData{
@@ -163,7 +169,8 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		if errors.Is(err, errDependencyCycle) {
 			return fiber.NewError(fiber.StatusConflict, "dependency cycle detected")
 		}
-		return fiber.NewError(upstreamErrorCode(err), err.Error())
+		s.logger.Error("dependency attestation failed", "error", err, "request_id", requestID)
+		return fiber.NewError(upstreamErrorCode(err), "dependency attestation failed")
 	}
 
 	// Validate own endorsements (cached fast-path or re-fetch on TTL expiry).
@@ -185,7 +192,8 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		start := time.Now()
 		blob, doc, err := s.nitroNSM.Attest(digest[:])
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitronsm: %v", err))
+			s.logger.Error("nitronsm attestation failed", "error", err, "request_id", requestID)
+			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 		}
 		s.logger.Debug("nitronsm attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		report := &AttestationReport{
@@ -201,7 +209,8 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		start := time.Now()
 		blob, quote, err := s.tdxDev.Attest(digest)
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("tdx: %v", err))
+			s.logger.Error("tdx attestation failed", "error", err, "request_id", requestID)
+			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 		}
 		s.logger.Debug("tdx attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		report := &AttestationReport{
@@ -221,7 +230,8 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		start := time.Now()
 		blob, doc, err := s.nitroTPM.Attest(digest[:])
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("nitrotpm: %v", err))
+			s.logger.Error("nitrotpm attestation failed", "error", err, "request_id", requestID)
+			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 		}
 		s.logger.Debug("nitrotpm attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		nitroTPMBlob = blob
@@ -241,7 +251,8 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		}
 		blob, snpReport, err := s.sevSNP.Attest(snpReportData, s.cfg.ReportEvidence.SEVSNPVMPL)
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("sevsnp: %v", err))
+			s.logger.Error("sevsnp attestation failed", "error", err, "request_id", requestID)
+			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 		}
 		s.logger.Debug("sevsnp attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
 		evidence = append(evidence, &AttestationEvidence{Kind: "sevsnp", Blob: blob, Data: sevsnp.NewAttestationData(snpReport)})
@@ -287,18 +298,12 @@ func sendReport(c *fiber.Ctx, report *AttestationReport, reportDataJSON []byte) 
 	return c.Send(body)
 }
 
-// extractXFCCHash extracts the Hash field from an x-forwarded-client-cert
-// header value as populated by Envoy proxy. The header format is:
-//
-//	key=value;key=value[,key=value;key=value]
-//
-// where commas separate multiple client certificates and semicolons separate
-// fields within a certificate entry.
+// extractXFCCHash extracts the Hash field from a single
+// x-forwarded-client-cert header entry as populated by Envoy proxy.
+// The entry format is: key=value;key=value
+// Multiple entries (comma-separated) must be rejected by the caller
+// before invoking this function.
 func extractXFCCHash(xfcc string) string {
-	// Use the rightmost certificate entry (closest proxy's client cert)
-	if idx := strings.LastIndexByte(xfcc, ','); idx >= 0 {
-		xfcc = xfcc[idx+1:]
-	}
 	for _, field := range strings.Split(xfcc, ";") {
 		field = strings.TrimSpace(field)
 		if !strings.HasPrefix(field, "Hash=") {

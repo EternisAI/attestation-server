@@ -36,6 +36,9 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 		if u.Scheme != "https" {
 			return nil, nil, 0, 0, fmt.Errorf("endorsement URL %d: scheme must be https, got %q (%s)", i, u.Scheme, u.String())
 		}
+		if err := CheckEndorsementDomain(u.Hostname(), s.cfg.EndorsementAllowedDomains); err != nil {
+			return nil, nil, 0, 0, fmt.Errorf("endorsement URL %d: %w", i, err)
+		}
 	}
 
 	// DNSSEC pre-validation for unique hosts
@@ -266,10 +269,13 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 	}
 
 	urls := make([]*url.URL, 0, len(reportData.Endorsements))
-	for i, s := range reportData.Endorsements {
-		u, err := url.Parse(s)
+	for i, rawURL := range reportData.Endorsements {
+		u, err := url.Parse(rawURL)
 		if err != nil {
-			return fmt.Errorf("dependency endorsement %d: invalid URL %q: %w", i, s, err)
+			return fmt.Errorf("dependency endorsement %d: invalid URL %q: %w", i, rawURL, err)
+		}
+		if err := CheckEndorsementDomain(u.Hostname(), s.cfg.EndorsementAllowedDomains); err != nil {
+			return fmt.Errorf("dependency endorsement %d: %w", i, err)
 		}
 		urls = append(urls, u)
 	}

@@ -26,18 +26,26 @@ algorithm = "sha384"  # sha1, sha256, sha384, sha512
 [report.user_data]
 env = []  # optional; environment variable names to include
 
+[ratelimit]
+enabled             = false  # rate-limit edge requests (no client cert / XFCC)
+requests_per_second = 1      # per-IP rate
+burst               = 1      # burst allowance
+stall_timeout       = "10s"  # max wait time before 429
+
 [secure_boot]
 enforce = false
 
 [endorsements]
-dnssec = false  # require DNSSEC validation for endorsement URL hosts
+dnssec          = false  # require DNSSEC validation for endorsement URL hosts
+allowed_domains = []     # empty = unrestricted; non-empty = exact hostname match only
 
 [endorsements.client]
 timeout = "10s"  # overall fetch timeout with retries
 
 [endorsements.cosign]
-verify     = true   # verify cosign signatures on endorsement documents
-url_suffix = ".sig" # suffix appended to endorsement URL to get signature bundle
+verify         = true   # verify cosign signatures on endorsement documents
+url_suffix     = ".sig" # suffix appended to endorsement URL to get signature bundle
+tuf_cache_path = ""     # empty = in-memory only; set writable path for disk cache
 
 [endorsements.cosign.build_signer]
 uri       = ""  # exact match override for BuildSignerURI OID (leave empty for BuildInfo match)

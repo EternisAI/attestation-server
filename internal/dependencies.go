@@ -112,7 +112,7 @@ func (s *Server) fetchDependencies(nonceHex, requestID, attestationPath string) 
 	}
 
 	start := time.Now()
-	client := s.dependencyHTTPClient()
+	client, privFP := s.dependencyHTTPClient()
 
 	g, gctx := errgroup.WithContext(s.ctx)
 	results := make([]json.RawMessage, len(s.cfg.DependencyEndpoints))
@@ -120,7 +120,7 @@ func (s *Server) fetchDependencies(nonceHex, requestID, attestationPath string) 
 	for i, ep := range s.cfg.DependencyEndpoints {
 		g.Go(func() error {
 			depStart := time.Now()
-			raw, err := s.fetchAndVerifyDependency(gctx, client, ep, nonceHex, requestID, outboundPath)
+			raw, err := s.fetchAndVerifyDependency(gctx, client, ep, nonceHex, requestID, outboundPath, privFP)
 			if err != nil {
 				dur := time.Since(depStart).Milliseconds()
 				if gctx.Err() != nil {
@@ -148,7 +148,8 @@ func (s *Server) fetchDependencies(nonceHex, requestID, attestationPath string) 
 
 // dependencyHTTPClient builds an HTTP client hardened against slowloris-like
 // attacks and misbehaving peers. It sets timeouts at every phase (dial, TLS
-// handshake, response headers) and an overall request deadline.
+// handshake, response headers) and an overall request deadline. Returns both
+// the client and the fingerprint of the private certificate it will present.
 //
 // The client presents the private certificate as the TLS client cert (mTLS)
 // and verifies the dependency's server certificate against the same CA
@@ -156,14 +157,21 @@ func (s *Server) fetchDependencies(nonceHex, requestID, attestationPath string) 
 // dependency chain must be issued by the same CA — Envoy only populates the
 // XFCC header when the client cert passes CA verification.
 //
+// The certificate and its fingerprint are captured atomically under the same
+// lock so that the e2e encryption check always uses the fingerprint matching
+// the cert that was presented on the TLS connection.
+//
 // Plain HTTP endpoints are expected to be reachable only through a local
 // mTLS-enabling proxy (e.g. Envoy, SPIRE Agent) that terminates TLS on the
 // loopback interface.
-func (s *Server) dependencyHTTPClient() *http.Client {
-	tlsCfg := &tls.Config{}
-
+func (s *Server) dependencyHTTPClient() (*http.Client, string) {
 	s.certs.mu.RLock()
-	tlsCfg.Certificates = []tls.Certificate{*s.certs.private.cert}
+	cert := *s.certs.private.cert
+	fp := s.certs.private.certFingerprint
+	tlsCfg := &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+	}
 	if s.certs.privateCA != nil {
 		tlsCfg.RootCAs = s.certs.privateCA.roots
 	}
@@ -184,7 +192,7 @@ func (s *Server) dependencyHTTPClient() *http.Client {
 			// surviving a certificate rotation.
 			DisableKeepAlives: true,
 		},
-	}
+	}, fp
 }
 
 // fetchAndVerifyDependency sends a GET request to the dependency endpoint
@@ -194,7 +202,7 @@ func (s *Server) dependencyHTTPClient() *http.Client {
 // Returning raw bytes (json.RawMessage) instead of a parsed struct avoids
 // re-marshaling through goccy/go-json, which can crash when serialising
 // values that were decoded into any-typed fields (zero-copy string refs).
-func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Client, endpoint *url.URL, nonceHex, requestID, attestationPath string) (json.RawMessage, error) {
+func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Client, endpoint *url.URL, nonceHex, requestID, attestationPath, privFP string) (json.RawMessage, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -225,10 +233,6 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 	if err := json.Unmarshal(body, &report); err != nil {
 		return nil, fmt.Errorf("parsing response: %w", err)
 	}
-
-	s.certs.mu.RLock()
-	privFP := s.certs.private.certFingerprint
-	s.certs.mu.RUnlock()
 
 	parsed, err := verifyDependencyReport(&report, nonceHex, privFP, time.Now())
 	if err != nil {

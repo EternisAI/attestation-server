@@ -77,18 +77,26 @@ algorithm = "sha384"
 [report.user_data]
 env = []
 
+[ratelimit]
+enabled             = false
+requests_per_second = 1
+burst               = 1
+stall_timeout       = "10s"
+
 [secure_boot]
 enforce = false
 
 [endorsements]
-dnssec = false
+dnssec          = false
+allowed_domains = []
 
 [endorsements.client]
 timeout = "10s"
 
 [endorsements.cosign]
-verify     = true
-url_suffix = ".sig"
+verify         = true
+url_suffix     = ".sig"
+tuf_cache_path = ""
 
 [endorsements.cosign.build_signer]
 uri       = ""
@@ -143,15 +151,21 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP` | `report.evidence.sevsnp` | `false` | Enable SEV-SNP evidence |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP_VMPL` | `report.evidence.sevsnp_vmpl` | `0` | VMPL level for SEV-SNP attestation (0–3) |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_TDX` | `report.evidence.tdx` | `false` | Enable Intel TDX evidence (exclusive: cannot combine with others) |
-| `ATTESTATION_SERVER_TPM_ENABLED` | `tpm.enabled` | `false` | Enable generic TPM PCR reading via /dev/tpmrm0; auto-disabled if NitroNSM or NitroTPM evidence is enabled |
+| `ATTESTATION_SERVER_TPM_ENABLED` | `tpm.enabled` | `false` | Enable generic TPM PCR reading via /dev/tpmrm0; auto-disabled if NitroNSM or NitroTPM evidence is enabled. **Note:** generic TPM PCR values are unattested (`TPM2_PCR_Read`) — they lack a hardware-signed quote. Integrity relies on the TEE's memory encryption protecting the OS. NitroNSM and NitroTPM PCRs are hardware-attested (embedded in the signed attestation document). A future revision may use `TPM2_Quote` for hardware-attested PCR values |
 | `ATTESTATION_SERVER_TPM_ALGORITHM` | `tpm.algorithm` | `sha384` | Hash algorithm for TPM PCR values: `sha1`/`sha256`/`sha384`/`sha512` (case-insensitive) |
+| `ATTESTATION_SERVER_RATELIMIT_ENABLED` | `ratelimit.enabled` | `false` | Rate-limit edge requests (those without client certificate / XFCC header) |
+| `ATTESTATION_SERVER_RATELIMIT_REQUESTS_PER_SECOND` | `ratelimit.requests_per_second` | `1` | Per-IP request rate for edge traffic |
+| `ATTESTATION_SERVER_RATELIMIT_BURST` | `ratelimit.burst` | `1` | Burst allowance per IP |
+| `ATTESTATION_SERVER_RATELIMIT_STALL_TIMEOUT` | `ratelimit.stall_timeout` | `10s` | Max time an over-limit request is stalled before receiving 429; IP extracted from `X-Envoy-Original-IP` > `X-Forwarded-For` > connection IP |
 | `ATTESTATION_SERVER_SECURE_BOOT_ENFORCE` | `secure_boot.enforce` | `false` | Enforce UEFI Secure Boot; exit on startup if not enabled. UEFI secure boot detection is skipped when NitroNSM evidence is enabled (enclaves have no EFI firmware; boot integrity is proven by NSM PCR measurements) |
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Comma-separated environment variable names to include in report (unique) |
-| `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints are verified against the private CA bundle (mTLS); HTTP endpoints must be proxied through a local mTLS-enabling proxy |
+| `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints are verified against the private CA bundle (mTLS); HTTP endpoints are a design decision for transparent proxy configurations where Envoy diverts traffic through mTLS on non-loopback interfaces — the e2e encryption proof (XFCC fingerprint check) ensures the connection was mTLS-protected regardless of the URL scheme |
 | `ATTESTATION_SERVER_ENDORSEMENTS_DNSSEC` | `endorsements.dnssec` | `false` | Require strict DNSSEC validation for endorsement URL hosts |
+| `ATTESTATION_SERVER_ENDORSEMENTS_ALLOWED_DOMAINS` | `endorsements.allowed_domains` | `[]` | Comma-separated list of allowed endorsement hostnames (exact match). Empty = unrestricted. Applies to both own and dependency endorsement URLs |
 | `ATTESTATION_SERVER_ENDORSEMENTS_CLIENT_TIMEOUT` | `endorsements.client.timeout` | `10s` | Overall timeout for fetching endorsement documents and cosign signatures (with retries) |
 | `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_VERIFY` | `endorsements.cosign.verify` | `true` | Verify cosign signatures on endorsement documents using Sigstore public-good infrastructure |
 | `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_URL_SUFFIX` | `endorsements.cosign.url_suffix` | `.sig` | Suffix appended to endorsement URL to fetch the cosign signature bundle |
+| `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_TUF_CACHE_PATH` | `endorsements.cosign.tuf_cache_path` | — | Writable directory for Sigstore TUF metadata cache. Empty = in-memory only (no disk writes; background refresh every 24h). Set a path for disk-cached TUF root that survives restarts |
 | `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI` | `endorsements.cosign.build_signer.uri` | — | Exact match override for BuildSignerURI Fulcio OID (takes precedence over `uri_regex`) |
 | `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI_REGEX` | `endorsements.cosign.build_signer.uri_regex` | — | Regex match override for BuildSignerURI Fulcio OID (ignored if `uri` is set) |
 | `ATTESTATION_SERVER_HTTP_CACHE_SIZE` | `http.cache.size` | `100MiB` | Maximum memory for the shared HTTP fetch cache (endorsements + cosign signatures, ristretto) |
@@ -199,6 +213,8 @@ The `sevsnp` package additionally exports `SplitEvidence` (split a blob into raw
 ## Attestation handler
 
 The handler calls `Attest` on each configured TEE device. Each `Attest` method retrieves evidence and verifies it internally using the same `VerifyEvidence` function that external verifiers would use, catching corrupted device output or driver bugs before they reach callers. The handler receives the verified parsed result alongside the raw blob and does not perform any additional verification.
+
+The `request_id` (a `crypto/rand`-backed UUID) is included in the nonce-bound `AttestationReportData` for audit trail purposes. Since it is cryptographically random, an attacker cannot predict it to pre-compute attestation reports. Verifiers recompute the nonce from the response data (which includes the request_id), not from a pre-shared value.
 
 ### Startup self-attestation
 
@@ -272,6 +288,8 @@ Uses system/Mozilla root CAs (via `golang.org/x/crypto/x509roots/fallback` blank
 ### Endorsement cache
 
 Uses `dgraph-io/ristretto/v2` with URL-string keys in a shared `fetcherCache` (stores both `*EndorsementDocument` and `*cosignResult` values — endorsement URLs and signature URLs don't collide). When multiple URLs resolve to the same document (verified byte-for-byte), the same pointer is stored under all URL keys (cost charged once). TTL is derived from Cache-Control `max-age` (capped at 24h, default 30m).
+
+Endorsement URLs are tied to CI commit hashes with immutable content. Extended caching (up to 24h) is by design — measurement changes require new commits and new URLs. The TTL cap and per-request revalidation on cache miss provide eventual consistency.
 
 ### Cosign endorsement verification
 

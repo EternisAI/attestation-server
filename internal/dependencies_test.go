@@ -250,7 +250,7 @@ func TestFetchAndVerifyDependency_NonceHeaderForwarded(t *testing.T) {
 
 	testNonce := "deadbeef01234567"
 	// Verification will fail (fake blob), but we can still check the header was sent.
-	_, _ = s.fetchAndVerifyDependency(ctx, client, ep, testNonce, "test-req-id", "")
+	_, _ = s.fetchAndVerifyDependency(ctx, client, ep, testNonce, "test-req-id", "", s.certs.private.certFingerprint)
 
 	if receivedNonce != testNonce {
 		t.Errorf("dependency received nonce %q, want %q", receivedNonce, testNonce)
@@ -269,7 +269,7 @@ func TestFetchAndVerifyDependency_Non200Status(t *testing.T) {
 			s := testServer(t, &Config{}, ctx)
 			ep, _ := url.Parse(ts.URL)
 
-			_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "")
+			_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "", s.certs.private.certFingerprint)
 			if err == nil {
 				t.Fatalf("expected error for status %d, got nil", status)
 			}
@@ -291,7 +291,7 @@ func TestFetchAndVerifyDependency_InvalidJSON(t *testing.T) {
 	s := testServer(t, &Config{}, ctx)
 	ep, _ := url.Parse(ts.URL)
 
-	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "")
+	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "", s.certs.private.certFingerprint)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
@@ -314,7 +314,7 @@ func TestFetchAndVerifyDependency_ContextCancellation(t *testing.T) {
 	// Cancel immediately so the request is aborted.
 	cancel()
 
-	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "")
+	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "", s.certs.private.certFingerprint)
 	if err == nil {
 		t.Fatal("expected error after context cancellation, got nil")
 	}
@@ -335,7 +335,7 @@ func TestFetchAndVerifyDependency_NonceMismatchInResponse(t *testing.T) {
 	s := testServer(t, &Config{}, ctx)
 	ep, _ := url.Parse(ts.URL)
 
-	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "correct-nonce", "test-req-id", "")
+	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "correct-nonce", "test-req-id", "", s.certs.private.certFingerprint)
 	if err == nil {
 		t.Fatal("expected error for nonce mismatch, got nil")
 	}
@@ -358,7 +358,7 @@ func TestFetchAndVerifyDependency_UsesGETMethod(t *testing.T) {
 	ep, _ := url.Parse(ts.URL)
 
 	// Will fail on parse but we only care about method.
-	_, _ = s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "")
+	_, _ = s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "", s.certs.private.certFingerprint)
 
 	if receivedMethod != http.MethodGet {
 		t.Errorf("dependency received method %q, want GET", receivedMethod)
@@ -593,7 +593,7 @@ func TestFetchAndVerifyDependency_RequestIDForwarded(t *testing.T) {
 	ep, _ := url.Parse(ts.URL)
 
 	wantID := "my-unique-request-id-123"
-	_, _ = s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", wantID, "")
+	_, _ = s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", wantID, "", s.certs.private.certFingerprint)
 
 	if receivedRequestID != wantID {
 		t.Errorf("dependency received X-Request-Id %q, want %q", receivedRequestID, wantID)
@@ -849,7 +849,7 @@ func TestFetchAndVerifyDependency_E2EErrorMasked(t *testing.T) {
 
 	ep, _ := url.Parse(ts.URL)
 
-	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "")
+	_, err := s.fetchAndVerifyDependency(ctx, &http.Client{}, ep, "aabb", "test-req-id", "", s.certs.private.certFingerprint)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

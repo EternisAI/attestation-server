@@ -32,16 +32,9 @@ func TestExtractXFCCHash(t *testing.T) {
 			xfcc: "Hash=abcd1234",
 			want: "abcd1234",
 		},
-		{
-			name: "multiple entries rightmost wins",
-			xfcc: "Hash=aaaa1111,Hash=bbbb2222",
-			want: "bbbb2222",
-		},
-		{
-			name: "multiple entries rightmost has no Hash",
-			xfcc: "Hash=aaaa1111,By=spiffe://example",
-			want: "",
-		},
+		// Multi-entry XFCC values (containing commas) are rejected by
+		// the handler before extractXFCCHash is called. These tests
+		// cover only single-entry parsing.
 		{
 			name: "no Hash field",
 			xfcc: "By=spiffe://cluster.local/ns/default;URI=spiffe://cluster.local/ns/default",
@@ -62,21 +55,13 @@ func TestExtractXFCCHash(t *testing.T) {
 			xfcc: "By=spiffe://cluster.local/ns/default;Hash=abcd1234ef567890;URI=spiffe://cluster.local/sa/client",
 			want: "abcd1234ef567890",
 		},
-		{
-			name: "standard Envoy format multiple entries rightmost wins",
-			xfcc: "By=spiffe://a;Hash=aaaa1111,By=spiffe://b;Hash=bbbb2222;URI=spiffe://b",
-			want: "bbbb2222",
-		},
+		// Multi-entry Envoy format is rejected at the handler level.
 		{
 			name: "whitespace around fields",
 			xfcc: " By=spiffe://example ; Hash=abcd1234 ; URI=spiffe://example ",
 			want: "abcd1234",
 		},
-		{
-			name: "whitespace around Hash in multiple entries",
-			xfcc: "Hash=aaaa1111, Hash=bbbb2222 ",
-			want: "bbbb2222",
-		},
+		// Multi-entry whitespace case is rejected at the handler level.
 		{
 			name: "Hash field with empty value",
 			xfcc: "Hash=",
@@ -107,11 +92,7 @@ func TestExtractXFCCHash(t *testing.T) {
 			xfcc: "SomeHash=1234;Hash=aabb1122",
 			want: "aabb1122",
 		},
-		{
-			name: "only comma no Hash",
-			xfcc: ",",
-			want: "",
-		},
+		// Comma-only input is rejected at the handler level.
 	}
 
 	for _, tt := range tests {

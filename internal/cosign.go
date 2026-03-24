@@ -40,9 +40,18 @@ type cosignResult struct {
 // initSigstoreVerifier creates an auto-updating Sigstore TUF client and
 // a signed entity verifier configured for online Rekor inclusion proof
 // verification. The TUF client refreshes the trusted root in the background.
-func initSigstoreVerifier(logger *slog.Logger) (*verify.Verifier, error) {
+func initSigstoreVerifier(logger *slog.Logger, tufCachePath string) (*verify.Verifier, error) {
 	opts := tuf.DefaultOptions()
-	opts.WithDisableLocalCache()
+	if tufCachePath != "" {
+		// Disk cache: survives restarts, faster startup after first fetch.
+		// The directory must be writable.
+		opts.WithCachePath(tufCachePath)
+		logger.Info("sigstore tuf cache enabled", "path", tufCachePath)
+	} else {
+		// In-memory only: no disk writes. Background goroutine refreshes
+		// every 24h; in-memory copy remains valid if network refresh fails.
+		opts.WithDisableLocalCache()
+	}
 
 	trustedRoot, err := root.NewLiveTrustedRoot(opts)
 	if err != nil {

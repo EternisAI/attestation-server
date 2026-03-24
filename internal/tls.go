@@ -186,10 +186,13 @@ func loadCABundle(path string) (*caBundle, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parsing CA certificate: %w", err)
 		}
-		// Self-signed: issuer == subject. This is the standard structural
-		// indicator and avoids depending on CheckSignatureFrom, which
-		// rejects SHA-1 signatures in Go 1.18+.
+		// Self-signed: issuer == subject, verified cryptographically.
+		// CheckSignatureFrom rejects SHA-1 CAs (Go 1.18+), which is
+		// intentional — SHA-1 is cryptographically broken for certificates.
 		if cert.IsCA && bytes.Equal(cert.RawIssuer, cert.RawSubject) {
+			if err := cert.CheckSignatureFrom(cert); err != nil {
+				return nil, fmt.Errorf("CA certificate claims self-signed but signature verification failed: %w", err)
+			}
 			roots.AddCert(cert)
 		} else {
 			intermediates.AddCert(cert)

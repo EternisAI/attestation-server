@@ -25,28 +25,34 @@ type CosignBuildSignerConfig struct {
 
 // Config holds the resolved server configuration.
 type Config struct {
-	BindHost                 string
-	BindPort                 int
-	LogFormat                string
-	LogLevel                 slog.Level
-	BuildInfoPath            string
-	EndorsementsPath         string
-	PublicTLSCertPath        string
-	PublicTLSKeyPath         string
-	PrivateTLSCertPath       string
-	PrivateTLSKeyPath        string
-	PrivateTLSCAPath         string
-	ReportEvidence           EvidenceConfig
-	ReportEnvVars            []string
-	SecureBootEnforce        bool
-	TPM                      TPMConfig
-	DependencyEndpoints      []*url.URL
-	EndorsementDNSSEC        bool
-	EndorsementClientTimeout time.Duration
-	HTTPCacheSize            int64
-	CosignVerify             bool
-	CosignURLSuffix          string
-	CosignBuildSigner        CosignBuildSignerConfig
+	BindHost                  string
+	BindPort                  int
+	LogFormat                 string
+	LogLevel                  slog.Level
+	BuildInfoPath             string
+	EndorsementsPath          string
+	PublicTLSCertPath         string
+	PublicTLSKeyPath          string
+	PrivateTLSCertPath        string
+	PrivateTLSKeyPath         string
+	PrivateTLSCAPath          string
+	ReportEvidence            EvidenceConfig
+	ReportEnvVars             []string
+	SecureBootEnforce         bool
+	TPM                       TPMConfig
+	DependencyEndpoints       []*url.URL
+	EndorsementDNSSEC         bool
+	EndorsementAllowedDomains []string
+	EndorsementClientTimeout  time.Duration
+	HTTPCacheSize             int64
+	RateLimitEnabled          bool
+	RateLimitRPS              float64
+	RateLimitBurst            int
+	RateLimitStallTimeout     time.Duration
+	CosignVerify              bool
+	CosignURLSuffix           string
+	CosignTUFCachePath        string
+	CosignBuildSigner         CosignBuildSignerConfig
 }
 
 // TPMConfig holds the configuration for generic TPM PCR reading.
@@ -98,6 +104,11 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	endorsementDomains := splitCommaValues(viper.GetStringSlice("endorsements.allowed_domains"))
+	if err := validateDomainAllowlist(endorsementDomains); err != nil {
+		return nil, err
+	}
+
 	endorsementTimeout, err := time.ParseDuration(viper.GetString("endorsements.client.timeout"))
 	if err != nil {
 		endorsementTimeout = 10 * time.Second
@@ -105,6 +116,11 @@ func LoadConfig() (*Config, error) {
 	httpCacheSize, err := parseByteSize(viper.GetString("http.cache.size"))
 	if err != nil {
 		httpCacheSize = 100 << 20
+	}
+
+	rateLimitStallTimeout, err := time.ParseDuration(viper.GetString("ratelimit.stall_timeout"))
+	if err != nil {
+		rateLimitStallTimeout = 10 * time.Second
 	}
 
 	cosignBuildSigner := CosignBuildSignerConfig{
@@ -119,28 +135,34 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		BindHost:                 viper.GetString("server.host"),
-		BindPort:                 viper.GetInt("server.port"),
-		LogFormat:                viper.GetString("log.format"),
-		LogLevel:                 parseLogLevel(viper.GetString("log.level")),
-		BuildInfoPath:            viper.GetString("paths.build_info"),
-		EndorsementsPath:         viper.GetString("paths.endorsements"),
-		PublicTLSCertPath:        absPath(viper.GetString("tls.public.cert_path")),
-		PublicTLSKeyPath:         absPath(viper.GetString("tls.public.key_path")),
-		PrivateTLSCertPath:       absPath(viper.GetString("tls.private.cert_path")),
-		PrivateTLSKeyPath:        absPath(viper.GetString("tls.private.key_path")),
-		PrivateTLSCAPath:         absPath(viper.GetString("tls.private.ca_path")),
-		ReportEvidence:           evidence,
-		ReportEnvVars:            envVars,
-		SecureBootEnforce:        viper.GetBool("secure_boot.enforce"),
-		TPM:                      tpmCfg,
-		DependencyEndpoints:      depEndpoints,
-		EndorsementDNSSEC:        viper.GetBool("endorsements.dnssec"),
-		EndorsementClientTimeout: endorsementTimeout,
-		HTTPCacheSize:            httpCacheSize,
-		CosignVerify:             viper.GetBool("endorsements.cosign.verify"),
-		CosignURLSuffix:          viper.GetString("endorsements.cosign.url_suffix"),
-		CosignBuildSigner:        cosignBuildSigner,
+		BindHost:                  viper.GetString("server.host"),
+		BindPort:                  viper.GetInt("server.port"),
+		LogFormat:                 viper.GetString("log.format"),
+		LogLevel:                  parseLogLevel(viper.GetString("log.level")),
+		BuildInfoPath:             viper.GetString("paths.build_info"),
+		EndorsementsPath:          viper.GetString("paths.endorsements"),
+		PublicTLSCertPath:         absPath(viper.GetString("tls.public.cert_path")),
+		PublicTLSKeyPath:          absPath(viper.GetString("tls.public.key_path")),
+		PrivateTLSCertPath:        absPath(viper.GetString("tls.private.cert_path")),
+		PrivateTLSKeyPath:         absPath(viper.GetString("tls.private.key_path")),
+		PrivateTLSCAPath:          absPath(viper.GetString("tls.private.ca_path")),
+		ReportEvidence:            evidence,
+		ReportEnvVars:             envVars,
+		SecureBootEnforce:         viper.GetBool("secure_boot.enforce"),
+		TPM:                       tpmCfg,
+		RateLimitEnabled:          viper.GetBool("ratelimit.enabled"),
+		RateLimitRPS:              viper.GetFloat64("ratelimit.requests_per_second"),
+		RateLimitBurst:            viper.GetInt("ratelimit.burst"),
+		RateLimitStallTimeout:     rateLimitStallTimeout,
+		DependencyEndpoints:       depEndpoints,
+		EndorsementDNSSEC:         viper.GetBool("endorsements.dnssec"),
+		EndorsementAllowedDomains: endorsementDomains,
+		EndorsementClientTimeout:  endorsementTimeout,
+		HTTPCacheSize:             httpCacheSize,
+		CosignVerify:              viper.GetBool("endorsements.cosign.verify"),
+		CosignURLSuffix:           viper.GetString("endorsements.cosign.url_suffix"),
+		CosignTUFCachePath:        viper.GetString("endorsements.cosign.tuf_cache_path"),
+		CosignBuildSigner:         cosignBuildSigner,
 	}, nil
 }
 
@@ -313,4 +335,36 @@ func parseByteSize(s string) (int64, error) {
 		return 0, fmt.Errorf("negative byte size %q", s)
 	}
 	return n, nil
+}
+
+// domainNameRe matches valid DNS domain names (no ports, no paths).
+var domainNameRe = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
+
+// validateDomainAllowlist checks that all entries are valid DNS names with
+// no duplicates.
+func validateDomainAllowlist(domains []string) error {
+	if dup := findDuplicate(domains); dup != "" {
+		return fmt.Errorf("endorsements.allowed_domains contains duplicate %q", dup)
+	}
+	for _, d := range domains {
+		if !domainNameRe.MatchString(d) {
+			return fmt.Errorf("endorsements.allowed_domains: invalid domain name %q", d)
+		}
+	}
+	return nil
+}
+
+// CheckEndorsementDomain verifies that the hostname is in the allowed
+// domains list. Returns nil if the allowlist is empty (unrestricted) or
+// if the hostname exactly matches one of the allowed domains.
+func CheckEndorsementDomain(host string, allowedDomains []string) error {
+	if len(allowedDomains) == 0 {
+		return nil
+	}
+	for _, d := range allowedDomains {
+		if strings.EqualFold(host, d) {
+			return nil
+		}
+	}
+	return fmt.Errorf("endorsement host %q not in allowed domains", host)
 }
