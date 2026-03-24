@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -528,9 +529,13 @@ func TestFetchDependencies_ContextCancelled(t *testing.T) {
 
 func TestFetchDependencies_NonceForwardedToAllEndpoints(t *testing.T) {
 	var nonces [2]string
+	var wg sync.WaitGroup
+	wg.Add(2)
 
 	ts0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nonces[0] = r.Header.Get(nonceHeader)
+		wg.Done()
+		wg.Wait()
 		w.WriteHeader(http.StatusOK)
 		body := makeReportJSON(t, nonces[0], []*AttestationEvidence{
 			{Kind: "nitronsm", Blob: []byte("fake")},
@@ -541,6 +546,8 @@ func TestFetchDependencies_NonceForwardedToAllEndpoints(t *testing.T) {
 
 	ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nonces[1] = r.Header.Get(nonceHeader)
+		wg.Done()
+		wg.Wait()
 		w.WriteHeader(http.StatusOK)
 		body := makeReportJSON(t, nonces[1], []*AttestationEvidence{
 			{Kind: "nitronsm", Blob: []byte("fake")},
@@ -594,13 +601,19 @@ func TestFetchAndVerifyDependency_RequestIDForwarded(t *testing.T) {
 
 func TestFetchDependencies_RequestIDForwardedToAll(t *testing.T) {
 	var ids [2]string
+	var wg sync.WaitGroup
+	wg.Add(2)
 	ts0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ids[0] = r.Header.Get("X-Request-Id")
+		wg.Done()
+		wg.Wait()
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer ts0.Close()
 	ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ids[1] = r.Header.Get("X-Request-Id")
+		wg.Done()
+		wg.Wait()
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer ts1.Close()
