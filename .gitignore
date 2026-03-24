@@ -7,3 +7,9 @@
 ._*
 # MacOS Desktop Services Store
 .DS_Store
+
+# Build output
+/attestation-server
+
+# Nix build output
+result

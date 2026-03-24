@@ -168,6 +168,15 @@ The server's security design is built around four principles:
 
 For the full security design including trust model, endorsement lifecycle, multi-provider redundancy, and cosign verification, see [docs/security.md](docs/security.md).
 
+## Nix build
+
+The project provides a Nix flake for reproducible, hermetic builds with pinned inputs. It is intended to be referenced as a flake input from downstream TEE image repositories:
+
+```nix
+inputs.attestation-server.url = "github:eternisai/attestation-server";
+# Binary at: attestation-server.packages.x86_64-linux.default -> $out/bin/attestation-server
+```
+
 ## Development
 
 ```sh

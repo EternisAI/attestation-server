@@ -32,6 +32,8 @@ pkg/sevsnp/sevsnp.go       # SEV-SNP device access, attestation via go-sev-guest
 pkg/tdx/tdx.go             # Intel TDX device access, attestation via go-tdx-guest, quote verification, report parsing (package tdx)
 pkg/tpm/tpm.go             # Generic TPM PCR reading via google/go-tpm over /dev/tpmrm0 (package tpm)
 config/config.toml         # default configuration file
+flake.nix                  # Nix flake: reproducible hermetic build of the server binary
+flake.lock                 # pinned Nix input revisions (nixpkgs, flake-utils)
 ```
 
 ## Configuration
@@ -339,6 +341,20 @@ Fixture files:
 - `pkg/tdx/testdata/tdx_attestation.json`
 - `internal/testdata/nitrotpm_sevsnp_attestation.json` (chained NitroTPM → SEV-SNP)
 - `internal/testdata/dependencies_attestation.json` (diamond dependency graph: A → {B, C}, B → C with NitroTPM+SEV-SNP, TDX, and SEV-SNP evidence across services; top-level has public cert at ingress with no client cert, each dependency has client cert matching caller's private cert)
+
+## Nix build
+
+The project provides a Nix flake for reproducible, hermetic builds. Inputs are pinned to exact commit hashes in `flake.nix` and locked in `flake.lock`. The flake builds a statically linked binary (`CGO_ENABLED=0`, stripped with `-s -w`). Tests are skipped (they require TEE hardware and network access). The source filter includes only `*.go`, `go.mod`, and `go.sum` — changes to docs, test fixtures, or config do not trigger a rebuild.
+
+The flake is designed to be referenced as a GitHub source input from downstream TEE image repositories:
+
+```nix
+# In the downstream flake:
+inputs.attestation-server.url = "github:eternisai/attestation-server";
+# Binary: attestation-server.packages.x86_64-linux.default -> $out/bin/attestation-server
+```
+
+When `go.mod` or `go.sum` change, the `vendorHash` in `flake.nix` must be updated. Set it to `lib.fakeHash`, build, and use the hash from the error message.
 
 ## Development
 
