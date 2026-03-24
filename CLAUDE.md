@@ -201,7 +201,12 @@ Each TEE package (`pkg/nitro`, `pkg/sevsnp`, `pkg/tdx`) exposes a consistent set
 | `VerifyEvidence` | Verify a raw evidence blob (standalone, no device needed) |
 | `Attest` | Combined retrieval + verification (calls `GetEvidence` then `VerifyEvidence`) |
 
-The `sevsnp` package additionally exports `SplitEvidence` (split a blob into raw report + certificate table) and `ReportSize` (the raw report size constant).
+The `sevsnp` package additionally exports `SplitEvidence` (split a blob into raw report + certificate table), `ReportSize` (the raw report size constant), and the `RevocationChecker` function type.
+
+Both `sevsnp.VerifyEvidence` and `tdx.VerifyEvidence` accept optional variadic parameters for revocation checking. These are omitted by standalone callers (backward-compatible) and provided by the attestation server when revocation is enabled:
+
+- `sevsnp.VerifyEvidence(blob, reportData, now, checkers ...RevocationChecker)` — optional callback checking the endorsement key (VCEK/VLEK) certificate against a CRL
+- `tdx.VerifyEvidence(rawQuote, reportData, now, checkRevocations ...bool)` — when true, enables go-tdx-guest's built-in Intel PCS collateral fetching and CRL checking
 
 ## SEV-SNP workarounds (pkg/sevsnp)
 
@@ -259,6 +264,42 @@ The dependency HTTP client is hardened against slowloris-like attacks with per-p
 ### Certificate hot-reload
 
 Certificate files (public cert/key, private cert/key, and private CA bundle) are hot-reloaded via fsnotify directory watchers. Since `validateTLSConfig` requires the CA bundle to be in the same directory as the private cert/key, a single watcher covers all three files. On reload, the private cert, CA bundle, and computed fingerprints are swapped atomically under the same `sync.RWMutex` (`tlsCertificates.mu`) that protects concurrent reads from request handlers and the dependency HTTP client.
+
+The CA bundle loader (`loadCABundle`) cryptographically verifies self-signed certificates using `x509.CheckSignatureFrom`, rejecting certificates whose issuer matches subject but whose signature is invalid. SHA-1 CAs are hard-rejected (Go 1.18+ enforces this).
+
+### TLS version requirements
+
+The dependency mTLS HTTP client enforces TLS 1.3 minimum. The endorsement/cosign fetch client uses TLS 1.2 minimum since public CDNs may not yet support TLS 1.3.
+
+## Rate limiting
+
+When `ratelimit.enabled` is true, a per-IP rate limiting middleware protects the server from resource exhaustion by edge clients. The middleware only applies to requests **without** an `x-forwarded-client-cert` (XFCC) header — service-to-service mTLS traffic is never rate-limited.
+
+Client IP is extracted with priority: `X-Envoy-Original-IP` header > first entry in `X-Forwarded-For` > connection IP. Extracted values are validated as IP addresses to prevent header injection from creating unbounded map entries.
+
+Over-limit requests are **stalled** (blocked in a FIFO queue) up to `ratelimit.stall_timeout` before receiving HTTP 429. This avoids immediately rejecting burst traffic while still bounding resource consumption. Per-IP rate limiter entries are cleaned up in a background goroutine when idle for 2× the stall timeout.
+
+## Certificate revocation checking
+
+When `revocation.enabled` is true (the default), the server checks TEE endorsement key certificates against Certificate Revocation Lists. CRL fetching is conditional on the configured evidence types:
+
+- **SEV-SNP**: A background goroutine fetches AMD KDS CRLs for all supported product lines (Milan, Genoa, Turin) at `revocation.refresh_interval` (default 12h). Both VCEK and VLEK CRLs are fetched. The `crlCache` stores parsed `x509.RevocationList` entries and checks endorsement key serial numbers during verification. Design is **fail-open**: if no CRL data is available yet (first fetch still pending or failed), certificates are accepted.
+- **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching (`CheckRevocations: true, GetCollateral: true`). This happens per-request and adds network latency.
+- **Nitro**: No CRL mechanism exists (ephemeral certificate chains per attestation; revocation is handled by AWS at the hypervisor level).
+
+When disabled, a startup warning is logged: "certificate revocation checking is disabled, revoked TEE endorsement keys will be accepted".
+
+## Error information leakage
+
+The server returns opaque `"internal error"` messages for all 5xx responses to prevent leaking device errors, file paths, and firmware codes to external callers. The real error is logged at ERROR level with `request_id` for debugging. 4xx error messages are preserved since they describe client-fixable problems (bad nonce, missing cert, etc.).
+
+## XFCC header validation
+
+The server rejects requests with multiple comma-separated XFCC entries (HTTP 400). The design assumes a single forwarded client certificate entry per request, enforcing direct end-to-end encryption without proxy intermediaries that might strip or replace the client cert.
+
+## Endorsement domain allowlist
+
+When `endorsements.allowed_domains` is configured (non-empty), endorsement document URLs are checked against the allowlist before fetching. Matching is **exact hostname** (case-insensitive) — subdomain matching is not supported, each host must be listed explicitly. The check applies to both own endorsement URLs and dependency endorsement URLs. An empty allowlist logs a startup warning since dependency reports can contain attacker-controlled URLs.
 
 ## Endorsement validation
 

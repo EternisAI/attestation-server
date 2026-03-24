@@ -55,20 +55,28 @@ This verifies the COSE_Sign1 ES384 signature, validates the certificate chain ag
 ```go
 import "github.com/eternisai/attestation-server/pkg/sevsnp"
 
+// Basic offline verification (no revocation check):
 report, err := sevsnp.VerifyEvidence(blob, expectedDigest, time.Now())
+
+// With optional revocation checker (checks endorsement key against a CRL):
+report, err := sevsnp.VerifyEvidence(blob, expectedDigest, time.Now(), revocationChecker)
 ```
 
-This parses the raw report and certificate table, verifies the ECDSA-P384 signature against embedded AMD root certificates (Milan, Genoa, Turin product lines for both VCEK and VLEK signing keys), and checks the report data.
+This parses the raw report and certificate table, verifies the ECDSA-P384 signature against embedded AMD root certificates (Milan, Genoa, Turin product lines for both VCEK and VLEK signing keys), and checks the report data. The optional `RevocationChecker` callback (if non-nil) is invoked after certificate chain verification to check the endorsement key against a CRL.
 
 ### TDX
 
 ```go
 import "github.com/eternisai/attestation-server/pkg/tdx"
 
+// Basic offline verification (no revocation check):
 quote, err := tdx.VerifyEvidence(blob, expectedDigest, time.Now())
+
+// With online revocation checking via Intel PCS:
+quote, err := tdx.VerifyEvidence(blob, expectedDigest, time.Now(), true)
 ```
 
-This parses the QuoteV4, verifies the ECDSA-P256 signature and PCK certificate chain against the embedded Intel SGX Root CA, and checks the report data.
+This parses the QuoteV4, verifies the ECDSA-P256 signature and PCK certificate chain against the embedded Intel SGX Root CA, and checks the report data. When `checkRevocations` is true, collateral is fetched from the Intel PCS and the PCK certificate chain is checked against CRLs (adds network latency).
 
 ### Chained evidence (NitroTPM + SEV-SNP)
 

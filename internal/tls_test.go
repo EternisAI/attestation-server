@@ -400,6 +400,50 @@ func TestLoadCABundle_NoPEMCerts(t *testing.T) {
 	}
 }
 
+func TestLoadCABundle_RejectsFakeSelfsigned(t *testing.T) {
+	// Create a certificate with matching issuer == subject but signed by a
+	// different key. This should be rejected by CheckSignatureFrom.
+	key1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Fake Self-Signed CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		SubjectKeyId:          []byte{1, 2, 3},
+	}
+	// Sign with key2 but embed key1's public key — issuer matches subject
+	// but the signature is from a different key.
+	derBytes, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key1.PublicKey, key2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	pemPath := filepath.Join(dir, "fake-ca.pem")
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	if err := os.WriteFile(pemPath, pemData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = loadCABundle(pemPath)
+	if err == nil {
+		t.Fatal("expected error for certificate with mismatched self-signature")
+	}
+	if !contains(err.Error(), "signature verification failed") {
+		t.Errorf("error %q does not mention signature verification", err)
+	}
+}
+
 func TestLoadCABundle_FileNotFound(t *testing.T) {
 	_, err := loadCABundle("/nonexistent/ca.pem")
 	if err == nil {

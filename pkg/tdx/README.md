@@ -14,11 +14,17 @@ Intel TDX (Trust Domain Extensions) guest attestation: quote retrieval via Confi
 ### Verify evidence (standalone, no device needed)
 
 ```go
+// Basic offline verification (no revocation check):
 quote, err := tdx.VerifyEvidence(rawQuote, expectedReportData, time.Now())
+
+// With online revocation checking via Intel PCS:
+quote, err := tdx.VerifyEvidence(rawQuote, expectedReportData, time.Now(), true)
 // quote.TdQuoteBody.MrTd — TD measurement
 // quote.TdQuoteBody.Rtmrs — runtime measurement registers
 // quote.TdQuoteBody.ReportData — the 64-byte report data
 ```
+
+When `checkRevocations` is true, collateral is fetched from the Intel PCS and the PCK certificate chain is checked against CRLs. This adds network latency to each verification call.
 
 ### Device access (requires ConfigFS TDX support)
 
@@ -37,15 +43,14 @@ The `QuoteProvider` is stateless (empty struct) and creates an isolated temporar
 
 ## Verification options
 
-Verification is performed offline without fetching collateral or checking revocation lists:
+By default, verification is performed offline without fetching collateral or checking revocation lists. When the optional `checkRevocations` parameter is true, the library fetches collateral from Intel PCS and checks CRLs:
 
 ```go
-verify.Options{
-    CheckRevocations: false,
-    GetCollateral:    false,
-    TrustedRoots:     intelSGXRootPool,
-    Now:              now,
-}
+// Default (offline):
+verify.Options{CheckRevocations: false, GetCollateral: false, TrustedRoots: intelSGXRootPool, Now: now}
+
+// With revocation checking (online):
+verify.Options{CheckRevocations: true, GetCollateral: true, TrustedRoots: intelSGXRootPool, Now: now}
 ```
 
 ## Embedded trust anchor

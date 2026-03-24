@@ -168,6 +168,22 @@ Both the dependency client and endorsement/cosign fetch client are hardened agai
 
 Keep-alives are disabled on both clients. For dependencies, this ensures every request gets a fresh TLS handshake so certificate rotation is respected. For endorsements, it avoids tying up sockets across the TTL-driven refetch interval.
 
+The dependency client enforces TLS 1.3 minimum for service-to-service mTLS. The endorsement client uses TLS 1.2 minimum since public CDNs may not yet support TLS 1.3.
+
+## Rate limiting
+
+The server supports optional per-IP rate limiting for edge requests (those without an XFCC header, indicating no client certificate). Service-to-service mTLS traffic is never rate-limited.
+
+Over-limit requests are stalled (blocked) up to a configurable timeout before receiving HTTP 429 with a `Retry-After` header. This avoids immediately rejecting burst traffic while bounding resource consumption. Per-IP rate limiter entries are cleaned up automatically when idle.
+
+## Certificate revocation checking
+
+Background CRL fetching checks TEE endorsement key certificates against revocation lists:
+
+- **SEV-SNP**: CRLs are fetched from AMD KDS (`kdsintf.amd.com`) for all supported product lines (Milan, Genoa, Turin), covering both VCEK and VLEK signing keys. The cache is refreshed on a configurable interval (default 12h). Design is fail-open: if no CRL data is available yet, certificates are accepted.
+- **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching, which runs per-request when enabled.
+- **Nitro**: No CRL mechanism exists (ephemeral certificate chains).
+
 ## Error information leakage
 
 The server distinguishes between internal and external error messages:

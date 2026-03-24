@@ -16,10 +16,16 @@ AMD SEV-SNP guest attestation: device access, extended report retrieval with cer
 ### Verify evidence (standalone, no device needed)
 
 ```go
+// Basic offline verification:
 report, err := sevsnp.VerifyEvidence(blob, expectedReportData, time.Now())
+
+// With optional revocation checker (checks endorsement key against a CRL):
+report, err := sevsnp.VerifyEvidence(blob, expectedReportData, time.Now(), revChecker)
 // report.Measurement — 384-bit launch measurement
 // report.Policy, report.Vmpl, report.ReportData, etc.
 ```
+
+The optional `RevocationChecker` callback is invoked after certificate chain verification to check the endorsement key (VCEK/VLEK) against a CRL. Pass nil or omit to skip revocation checking.
 
 ### Device access (requires /dev/sev-guest)
 

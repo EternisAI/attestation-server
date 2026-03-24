@@ -153,3 +153,28 @@ func TestCRLURLsForEvidence(t *testing.T) {
 		}
 	})
 }
+
+func TestSevsnpRevocationChecker(t *testing.T) {
+	t.Run("nil cache returns nil checker", func(t *testing.T) {
+		s := &Server{}
+		checker := s.sevsnpRevocationChecker()
+		if checker != nil {
+			t.Fatal("expected nil checker when crlCache is nil")
+		}
+	})
+
+	t.Run("non-nil cache returns working checker", func(t *testing.T) {
+		s := &Server{
+			crlCache: newCRLCache(slog.New(slog.NewJSONHandler(io.Discard, nil))),
+		}
+		checker := s.sevsnpRevocationChecker()
+		if checker == nil {
+			t.Fatal("expected non-nil checker when crlCache exists")
+		}
+		// The checker should pass for any cert when the cache is empty (fail-open).
+		cert := &x509.Certificate{SerialNumber: big.NewInt(42)}
+		if err := checker(cert, time.Now()); err != nil {
+			t.Fatalf("empty-cache checker should pass: %v", err)
+		}
+	})
+}

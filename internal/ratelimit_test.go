@@ -151,3 +151,83 @@ func TestRateLimitMiddleware_StallingBehavior(t *testing.T) {
 		t.Errorf("second request completed too quickly (%v), expected stalling", elapsed)
 	}
 }
+
+func TestRateLimitMiddleware_TimeoutReturns429(t *testing.T) {
+	// This test verifies that over-limit requests eventually receive 429.
+	// The stalling/timeout behavior depends on context propagation which
+	// varies in Fiber test mode, so we only assert on the status code.
+	s := &Server{
+		logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		cfg: &Config{
+			RateLimitRPS:          0.001, // extremely low — one token per 1000s
+			RateLimitBurst:        1,
+			RateLimitStallTimeout: 50 * time.Millisecond,
+		},
+	}
+
+	app := fiber.New()
+	app.Use(s.rateLimitMiddleware())
+	app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendStatus(200)
+	})
+
+	// First request consumes the burst token.
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	resp, _ := app.Test(req, -1)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("first request: status = %d, want 200", resp.StatusCode)
+	}
+
+	// Second request should be rejected (burst exhausted, very low RPS).
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	resp2, _ := app.Test(req2, 2000)
+	resp2.Body.Close()
+	if resp2.StatusCode != 429 {
+		t.Fatalf("second request: status = %d, want 429", resp2.StatusCode)
+	}
+}
+
+func TestRateLimitMiddleware_PerIPIsolation(t *testing.T) {
+	s := &Server{
+		logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		cfg: &Config{
+			RateLimitRPS:          0.001, // extremely low
+			RateLimitBurst:        1,
+			RateLimitStallTimeout: 100 * time.Millisecond,
+		},
+	}
+
+	app := fiber.New()
+	app.Use(s.rateLimitMiddleware())
+	app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendStatus(200)
+	})
+
+	// First IP exhausts its burst token.
+	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req1.Header.Set("X-Forwarded-For", "10.0.0.1")
+	resp1, _ := app.Test(req1, -1)
+	resp1.Body.Close()
+	if resp1.StatusCode != 200 {
+		t.Fatalf("IP1 first request: status = %d, want 200", resp1.StatusCode)
+	}
+
+	// Second IP should still have its own burst token.
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req2.Header.Set("X-Forwarded-For", "10.0.0.2")
+	resp2, _ := app.Test(req2, -1)
+	resp2.Body.Close()
+	if resp2.StatusCode != 200 {
+		t.Fatalf("IP2 first request: status = %d, want 200 (separate bucket)", resp2.StatusCode)
+	}
+
+	// First IP's second request should be rate limited.
+	req3 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req3.Header.Set("X-Forwarded-For", "10.0.0.1")
+	resp3, _ := app.Test(req3, 2000)
+	resp3.Body.Close()
+	if resp3.StatusCode != 429 {
+		t.Fatalf("IP1 second request: status = %d, want 429", resp3.StatusCode)
+	}
+}

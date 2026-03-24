@@ -921,6 +921,46 @@ func TestFetchEndorsementDocuments_RejectsMixedSchemes(t *testing.T) {
 	}
 }
 
+func TestFetchEndorsementDocuments_RejectsDisallowedDomain(t *testing.T) {
+	s := &Server{
+		cfg: &Config{
+			EndorsementClientTimeout:  5 * time.Second,
+			EndorsementAllowedDomains: []string{"trusted.example.com"},
+		},
+	}
+
+	u, _ := url.Parse("https://evil.attacker.com/endorsement.json")
+	_, _, _, _, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u}, nil)
+	if err == nil {
+		t.Fatal("expected error for disallowed domain")
+	}
+	if !contains(err.Error(), "not in allowed domains") {
+		t.Errorf("error %q does not mention allowed domains", err)
+	}
+}
+
+func TestFetchEndorsementDocuments_AllowsPermittedDomain(t *testing.T) {
+	s := &Server{
+		cfg: &Config{
+			EndorsementClientTimeout:  1 * time.Second,
+			EndorsementAllowedDomains: []string{"trusted.example.com"},
+		},
+	}
+
+	// The domain is allowed, but the URL won't resolve — we just check it
+	// passes the domain check and fails at the network level instead.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	u, _ := url.Parse("https://trusted.example.com/endorsement.json")
+	_, _, _, _, err := s.fetchEndorsementDocumentsWithClient(ctx, []*url.URL{u}, nil)
+	if err == nil {
+		t.Fatal("expected error (network), but domain check should have passed")
+	}
+	if contains(err.Error(), "not in allowed domains") {
+		t.Errorf("domain check should have passed for allowed domain, got: %v", err)
+	}
+}
+
 // --- validateDependencyEndorsements ---
 
 func TestValidateDependencyEndorsements_NoEndorsementURLs(t *testing.T) {
