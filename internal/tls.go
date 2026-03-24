@@ -273,6 +273,11 @@ func (s *Server) loadCertificates() error {
 		if err != nil {
 			return fmt.Errorf("loading private TLS certificate: %w", err)
 		}
+		// Private certificates must use ECDSA. RSA is allowed for public
+		// certs (Internet-facing ingress may need RSA for compatibility),
+		// but service-to-service mTLS within the dependency chain uses ECDSA
+		// for performance and because the SEV-SNP/Nitro attestation evidence
+		// is already ECDSA-signed.
 		if _, ok := cert.PrivateKey.(*ecdsa.PrivateKey); !ok {
 			return fmt.Errorf("private TLS key must be ECDSA, got %T", cert.PrivateKey)
 		}
@@ -365,6 +370,9 @@ func (s *Server) certWatchLoop(ctx context.Context, watcher *fsnotify.Watcher, n
 	}
 }
 
+// reloadPublicCert hot-reloads the public TLS certificate from disk. Called
+// by the fsnotify watcher when certificate files change. Errors are logged
+// but do not crash the server — the old certificate remains in use.
 func (s *Server) reloadPublicCert() {
 	s.logger.Info("reloading public TLS certificate")
 	cert, err := tls.LoadX509KeyPair(s.cfg.PublicTLSCertPath, s.cfg.PublicTLSKeyPath)
@@ -391,6 +399,10 @@ func (s *Server) reloadPublicCert() {
 	s.logger.LogAttrs(context.Background(), slog.LevelInfo, "reloaded public TLS certificate", attrs...)
 }
 
+// reloadPrivateCert hot-reloads the private TLS certificate, key, and CA
+// bundle from disk. All three are swapped atomically under tlsCertificates.mu
+// so request handlers and the dependency HTTP client always see a consistent
+// set. Errors are logged but do not crash the server.
 func (s *Server) reloadPrivateCert() {
 	s.logger.Info("reloading private TLS certificate")
 	cert, err := tls.LoadX509KeyPair(s.cfg.PrivateTLSCertPath, s.cfg.PrivateTLSKeyPath)

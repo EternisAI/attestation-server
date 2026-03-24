@@ -1,3 +1,4 @@
+// Package cmd implements the cobra CLI for the attestation server.
 package cmd
 
 import (

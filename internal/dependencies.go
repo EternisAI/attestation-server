@@ -178,6 +178,10 @@ func (s *Server) dependencyHTTPClient() *http.Client {
 			DialContext: (&net.Dialer{
 				Timeout: 5 * time.Second,
 			}).DialContext,
+			// Keep-alives are disabled so each request gets a fresh TLS
+			// connection. This ensures the client cert and CA verification
+			// happen on every request, preventing stale connections from
+			// surviving a certificate rotation.
 			DisableKeepAlives: true,
 		},
 	}

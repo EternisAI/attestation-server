@@ -1,3 +1,7 @@
+// Package tpm provides generic TPM PCR reading via the kernel's TPM
+// resource manager (/dev/tpmrm0) using google/go-tpm. It is used
+// independently of TEE-specific TPM access (NitroTPM) to capture
+// platform measurements on systems with a discrete or firmware TPM.
 package tpm
 
 import (
@@ -29,7 +33,9 @@ func ReadPCRs(alg tpm2.TPMAlgID) (map[int]hexbytes.Bytes, error) {
 		remaining[i] = i
 	}
 
-	// TPM may return a subset of requested PCRs per call due to buffer limits.
+	// The TPM may return only a subset of requested PCRs per call due to
+	// response buffer limits (TPM2_PCR_Read spec, Part 3 §22.4). We loop,
+	// removing returned indices from the request set, until all 24 are read.
 	for len(remaining) > 0 {
 		sel := tpm2.TPMLPCRSelection{
 			PCRSelections: []tpm2.TPMSPCRSelection{

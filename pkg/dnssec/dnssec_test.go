@@ -467,8 +467,8 @@ func TestValidate_ExpiredRRSIG(t *testing.T) {
 	}
 }
 
-// TestValidate_WrongSignerName is a regression test for GO-2022-0979:
-// an RRSIG with a mismatched signer name must be rejected.
+// TestValidate_WrongSignerName verifies that an RRSIG with a signer name
+// pointing to an attacker-controlled zone is rejected (cross-zone forgery).
 func TestValidate_WrongSignerName(t *testing.T) {
 	h := newTestHierarchy(t)
 	addr, cleanup := h.startServer(t, func(qname string, qtype uint16, resp *dns.Msg) {
@@ -490,8 +490,8 @@ func TestValidate_WrongSignerName(t *testing.T) {
 	}
 }
 
-// TestValidate_FakeRootKey is a regression test for GO-2022-1026:
-// a self-signed root key not matching any trust anchor must be rejected.
+// TestValidate_FakeRootKey verifies that a self-signed root key whose
+// key material doesn't match any trust anchor is rejected (key tag forgery).
 func TestValidate_FakeRootKey(t *testing.T) {
 	h := newTestHierarchy(t)
 	addr, cleanup := h.startServer(t, nil)

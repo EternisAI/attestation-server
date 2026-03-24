@@ -139,6 +139,10 @@ func (s *Server) verifyCosignBundle(bundleJSON, endorsementDocBytes []byte) (*co
 
 	digest := sha256.Sum256(endorsementDocBytes)
 
+	// WithoutIdentitiesUnsafe skips Fulcio certificate identity matching
+	// during signature verification. This is safe here because we perform
+	// our own strict OID-by-OID validation in validateCosignOIDs afterward,
+	// comparing every Fulcio extension against the server's BuildInfo.
 	policy := verify.NewPolicy(
 		verify.WithArtifactDigest("sha256", digest[:]),
 		verify.WithoutIdentitiesUnsafe(),

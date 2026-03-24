@@ -417,12 +417,15 @@ func verifyWithKeys(rrset []dns.RR, sigs []*dns.RRSIG, qname, zone string, keys 
 	var lastErr error
 
 	for _, sig := range sigs {
-		// GO-2022-0979: validate RRSIG owner name matches the expected qname.
+		// Reject RRSIG records whose owner name doesn't match the query name.
+		// Without this, an attacker who controls a sibling zone could inject
+		// cross-zone signatures that would pass cryptographic verification.
 		if !strings.EqualFold(sig.Header().Name, qname) {
 			lastErr = fmt.Errorf("RRSIG owner name %q does not match expected %q", sig.Header().Name, qname)
 			continue
 		}
-		// GO-2022-0979: validate signer name matches the expected zone.
+		// Reject RRSIG records whose signer name doesn't match the expected
+		// zone. This prevents accepting signatures from unauthorized zones.
 		if !strings.EqualFold(sig.SignerName, zone) {
 			lastErr = fmt.Errorf("RRSIG signer name %q does not match expected zone %q", sig.SignerName, zone)
 			continue
@@ -516,10 +519,12 @@ func extractTypedRRsAndSigs(msg *dns.Msg, qname string, qtype uint16) ([]dns.RR,
 	return rrset, sigs
 }
 
-// keysMatch compares two DNSKEY records by their actual key material.
-// This prevents GO-2022-1026 where an attacker presents a self-signed
-// root key: we compare (Flags, Protocol, Algorithm, PublicKey) rather
-// than trusting the key tag alone.
+// keysMatch compares two DNSKEY records by their actual key material
+// (Flags, Protocol, Algorithm, PublicKey) rather than trusting the key
+// tag alone. Key tags are 16-bit values derived from the key material
+// and are not collision-resistant — an attacker could craft a self-signed
+// key with a matching tag. Comparing full key material prevents accepting
+// a forged root key that happens to share a tag with a trust anchor.
 func keysMatch(a, b *dns.DNSKEY) bool {
 	return a.Flags == b.Flags &&
 		a.Protocol == b.Protocol &&

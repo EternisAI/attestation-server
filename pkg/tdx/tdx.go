@@ -1,3 +1,6 @@
+// Package tdx implements Intel TDX (Trust Domain Extensions) guest
+// attestation: quote retrieval via ConfigFS and offline ECDSA-P256
+// signature verification against the embedded Intel SGX Root CA.
 package tdx
 
 import (

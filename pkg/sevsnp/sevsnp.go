@@ -1,3 +1,8 @@
+// Package sevsnp implements AMD SEV-SNP guest attestation: device access
+// via go-sev-guest, extended report retrieval with certificate buffer
+// caching, and offline signature verification against embedded AMD root
+// certificates. See VerifyEvidence for workarounds applied to the
+// go-sev-guest library.
 package sevsnp
 
 import (

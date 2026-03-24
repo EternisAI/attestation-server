@@ -1,3 +1,8 @@
+// Package nitro implements AWS Nitro attestation verification for both
+// NSM (Nitro Security Module) and NitroTPM evidence. Attestation
+// documents are COSE_Sign1-wrapped CBOR payloads signed with ES384; this
+// package verifies the COSE signature and certificate chain against the
+// embedded AWS Nitro Enclaves root CA (Root-G1).
 package nitro
 
 import (

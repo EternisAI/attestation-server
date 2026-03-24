@@ -1,3 +1,7 @@
+// Package app implements the attestation server: configuration, HTTP
+// handler, TEE evidence collection, transitive dependency verification,
+// endorsement validation, TLS certificate management, and cosign
+// signature verification.
 package app
 
 import (
@@ -19,8 +23,14 @@ import (
 )
 
 const (
+	// nonceHeader carries the hex-encoded nonce that the caller wants bound
+	// into the attestation evidence. Dependency servers receive this from
+	// their parent so the entire chain shares one nonce.
 	nonceHeader = "x-attestation-nonce"
-	pathHeader  = "x-attestation-path"
+
+	// pathHeader carries a comma-separated list of service instance IDs
+	// visited along the dependency chain, used for cycle detection.
+	pathHeader = "x-attestation-path"
 )
 
 // handleAttestation serves GET /api/v1/attestation. It collects server

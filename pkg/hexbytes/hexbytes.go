@@ -1,3 +1,7 @@
+// Package hexbytes provides a []byte wrapper that JSON-serializes as a
+// hex-encoded string instead of the standard library's base64 encoding.
+// Used throughout the attestation API to represent binary measurements,
+// digests, and nonces in human-readable form.
 package hexbytes
 
 import (

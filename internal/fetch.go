@@ -15,9 +15,17 @@ import (
 	"time"
 
 	ristretto "github.com/dgraph-io/ristretto/v2"
+
+	// The x509roots/fallback blank import embeds Mozilla's root CA bundle
+	// as a fallback when the system trust store is unavailable (e.g. minimal
+	// container images without ca-certificates). This ensures endorsement
+	// HTTPS fetches always have a reasonable set of trusted roots.
 	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
+// Endorsement/cosign HTTP client hardening constants. Per-phase timeouts
+// prevent a misbehaving or malicious server from holding connections open
+// indefinitely. The body limit prevents memory exhaustion.
 const (
 	fetchDialTimeout           = 3 * time.Second
 	fetchTLSHandshakeTimeout   = 5 * time.Second
@@ -92,7 +100,10 @@ func (s *Server) fetchHTTPClient() *http.Client {
 			TLSHandshakeTimeout:   fetchTLSHandshakeTimeout,
 			ResponseHeaderTimeout: fetchResponseHeaderTimeout,
 			DialContext:           dialer.DialContext,
-			DisableKeepAlives:     true,
+			// Disable keep-alives: each fetch is a one-shot request during
+			// endorsement validation, and re-using connections would tie up
+			// sockets across the TTL-driven refetch interval.
+			DisableKeepAlives: true,
 		},
 	}
 }

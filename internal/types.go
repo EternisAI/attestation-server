@@ -13,7 +13,13 @@ import (
 	"github.com/eternisai/attestation-server/pkg/nitro"
 )
 
-// Fields sourced from: https://github.com/sigstore/fulcio/blob/v1.8.5/pkg/certificate/extensions.go#L60
+// BuildInfo holds SLSA provenance metadata mirroring the Fulcio certificate
+// extensions defined by sigstore. These fields are populated from a
+// build-time JSON file and included in every attestation response. When
+// cosign verification is enabled, each field is compared against the
+// corresponding OID extension in the Fulcio signing certificate.
+//
+// Field definitions: https://github.com/sigstore/fulcio/blob/v1.8.5/pkg/certificate/extensions.go#L60
 type BuildInfo struct {
 	// Reference to specific build instructions that are responsible for signing.
 	BuildSignerURI string `json:"BuildSignerURI,omitempty"`

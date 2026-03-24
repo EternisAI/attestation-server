@@ -213,6 +213,9 @@ func absPath(p string) string {
 	return abs
 }
 
+// parseDependencyEndpoints parses and validates dependency endpoint URLs.
+// Only http and https schemes are allowed; http endpoints are expected to
+// be reachable through a local mTLS-enabling proxy on the loopback interface.
 func parseDependencyEndpoints(raw []string) ([]*url.URL, error) {
 	seen := make(map[string]bool, len(raw))
 	urls := make([]*url.URL, 0, len(raw))

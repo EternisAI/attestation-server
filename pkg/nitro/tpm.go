@@ -95,6 +95,12 @@ func (n *TPM) Attest(nonce []byte) ([]byte, *AttestationDocument, error) {
 // the NitroTPM vendor command, without performing verification. Use
 // VerifyEvidence to verify the returned blob separately, or use Attest
 // for combined retrieval and verification.
+//
+// The NitroTPM NSM interface uses an NV index as a shared buffer: the
+// caller writes a CBOR-encoded request, issues a vendor command that
+// triggers the NSM to process it, and reads the response back from the
+// same NV index. The NV space is allocated before each request and freed
+// afterward to avoid stale state.
 func (n *TPM) GetEvidence(nonce []byte) ([]byte, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()

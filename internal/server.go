@@ -50,6 +50,16 @@ type Server struct {
 }
 
 // NewServer constructs a Server with middleware and routes configured.
+// The initialization order is significant:
+//  1. Load build info and endorsement URLs (static config)
+//  2. Load and verify TLS certificates
+//  3. Open TEE devices and perform self-attestation (captures parsed
+//     results for endorsement validation; primes SEV-SNP cert cache)
+//  4. Validate endorsements against self-attestation evidence
+//  5. Configure HTTP routes and middleware
+//
+// Steps 3–4 exit the process on failure, ensuring the server never
+// starts with unverified evidence or stale endorsements.
 func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	s := &Server{cfg: cfg, logger: logger}
 
