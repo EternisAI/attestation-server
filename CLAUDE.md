@@ -297,6 +297,22 @@ Verified cosign results are cached alongside endorsement documents in the shared
 
 Tests use the standard `testing` package (no testify), table-driven subtests with `t.Run`, and no mocking of hardware interfaces.
 
+### Fuzz tests
+
+Security-sensitive parsers have `Fuzz*` tests (Go native fuzzing) that verify no panics on arbitrary input. Run seed corpus with `go test ./...`; run actual fuzzing with e.g. `go test ./internal/ -fuzz=FuzzExtractXFCCHash -fuzztime=30s`. Current fuzz targets:
+
+- `FuzzExtractXFCCHash`, `FuzzIsValidHexFingerprint` — untrusted XFCC header parsing (`internal/attestation_test.go`)
+- `FuzzParseCacheTTL`, `FuzzParseByteSize`, `FuzzPCRGoldenValues_UnmarshalJSON` — untrusted HTTP headers, config input, endorsement JSON (`internal/endorsements_test.go`)
+- `FuzzBytes_UnmarshalJSON`, `FuzzBytes_RoundTrip` — hex JSON deserialization and marshal↔unmarshal consistency (`pkg/hexbytes/hexbytes_test.go`)
+
+### Live DNSSEC tests
+
+`pkg/dnssec/dnssec_test.go` includes live tests that perform real DNSSEC chain-of-trust validation against public domains (ietf.org, internetsociety.org). Gated behind an environment variable:
+
+```sh
+DNSSEC_LIVE_TEST=1 go test ./pkg/dnssec/ -run TestLive -v
+```
+
 ### Attestation verification fixtures
 
 Each TEE package has a `testdata/` directory with JSON fixtures captured from real hardware. All fixtures use the same format — the attestation handler's full response wrapped with a timestamp from within the certificate validity window:

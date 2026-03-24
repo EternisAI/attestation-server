@@ -110,3 +110,42 @@ func TestBytes_RoundTrip_inMap(t *testing.T) {
 		}
 	}
 }
+
+// FuzzBytes_UnmarshalJSON ensures UnmarshalJSON never panics on
+// arbitrary input. HexBytes values are deserialized from untrusted
+// attestation responses and endorsement documents.
+func FuzzBytes_UnmarshalJSON(f *testing.F) {
+	f.Add([]byte(`"deadbeef"`))
+	f.Add([]byte(`""`))
+	f.Add([]byte(`123`))
+	f.Add([]byte(`"zzzz"`))
+	f.Add([]byte(`"abc"`))
+	f.Add([]byte(``))
+	f.Add([]byte(`"`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var h Bytes
+		h.UnmarshalJSON(data)
+	})
+}
+
+// FuzzBytes_RoundTrip verifies that marshal→unmarshal is lossless
+// for arbitrary byte slices.
+func FuzzBytes_RoundTrip(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{0x00})
+	f.Add([]byte{0xde, 0xad, 0xbe, 0xef})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		h := Bytes(data)
+		encoded, err := h.MarshalJSON()
+		if err != nil {
+			t.Fatalf("MarshalJSON error: %v", err)
+		}
+		var decoded Bytes
+		if err := decoded.UnmarshalJSON(encoded); err != nil {
+			t.Fatalf("UnmarshalJSON error: %v", err)
+		}
+		if !bytes.Equal(decoded, data) {
+			t.Errorf("round-trip mismatch: got %v, want %v", decoded, data)
+		}
+	})
+}

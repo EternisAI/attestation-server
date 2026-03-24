@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -331,5 +332,45 @@ func TestErrorHandler_PlainError(t *testing.T) {
 	bodyStr := string(body)
 	if bodyStr == "" {
 		t.Fatal("empty response body")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NewLogger
+// ---------------------------------------------------------------------------
+
+func TestNewLogger_JSONFormat(t *testing.T) {
+	cfg := &Config{LogFormat: "json", LogLevel: slog.LevelInfo}
+	logger := NewLogger(cfg)
+	if logger == nil {
+		t.Fatal("NewLogger returned nil")
+	}
+	if !logger.Enabled(context.Background(), slog.LevelInfo) {
+		t.Error("logger should be enabled at INFO level")
+	}
+}
+
+func TestNewLogger_TextFormat(t *testing.T) {
+	cfg := &Config{LogFormat: "text", LogLevel: slog.LevelDebug}
+	logger := NewLogger(cfg)
+	if logger == nil {
+		t.Fatal("NewLogger returned nil")
+	}
+	if !logger.Enabled(context.Background(), slog.LevelDebug) {
+		t.Error("logger should be enabled at DEBUG level")
+	}
+}
+
+func TestNewLogger_DefaultFormat(t *testing.T) {
+	cfg := &Config{LogFormat: "unknown", LogLevel: slog.LevelWarn}
+	logger := NewLogger(cfg)
+	if logger == nil {
+		t.Fatal("NewLogger returned nil")
+	}
+	if !logger.Enabled(context.Background(), slog.LevelWarn) {
+		t.Error("logger should be enabled at WARN level")
+	}
+	if logger.Enabled(context.Background(), slog.LevelInfo) {
+		t.Error("logger should NOT be enabled at INFO when level is WARN")
 	}
 }

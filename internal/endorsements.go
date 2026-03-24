@@ -362,6 +362,9 @@ func validateNitroTPMMeasurements(doc *nitro.AttestationDocument, endorsement *P
 // values from an endorsement.
 func comparePCRs(actual map[int][]byte, endorsement *PCREndorsement) error {
 	for idx, expectedHex := range endorsement.Measurements.PCRs {
+		if expectedHex == "" {
+			return fmt.Errorf("PCR%d: empty value in endorsement", idx)
+		}
 		expected, err := hex.DecodeString(expectedHex)
 		if err != nil {
 			return fmt.Errorf("PCR%d: invalid hex in endorsement: %w", idx, err)
@@ -381,6 +384,9 @@ func comparePCRs(actual map[int][]byte, endorsement *PCREndorsement) error {
 // validateSEVSNPMeasurement compares the SEV-SNP launch measurement against
 // the golden hex value from an endorsement.
 func validateSEVSNPMeasurement(report *spb.Report, endorsementHex string) error {
+	if endorsementHex == "" {
+		return fmt.Errorf("empty measurement in endorsement")
+	}
 	expected, err := hex.DecodeString(endorsementHex)
 	if err != nil {
 		return fmt.Errorf("invalid hex in endorsement: %w", err)
@@ -394,7 +400,9 @@ func validateSEVSNPMeasurement(report *spb.Report, endorsementHex string) error 
 }
 
 // validateTDXMeasurements compares TDX measurement registers against golden
-// values from an endorsement. Only non-empty endorsement fields are checked.
+// values from an endorsement. Individual fields are optional, but at least
+// one must be set — an endorsement with all fields empty would accept any
+// TDX quote.
 func validateTDXMeasurements(quote *pb.QuoteV4, endorsement *TDXEndorsement) error {
 	body := quote.GetTdQuoteBody()
 
@@ -409,10 +417,12 @@ func validateTDXMeasurements(quote *pb.QuoteV4, endorsement *TDXEndorsement) err
 		{"RTMR2", endorsement.RTMR2, getRTMR(body, 2)},
 	}
 
+	var checked int
 	for _, c := range checks {
 		if c.expected == "" {
 			continue
 		}
+		checked++
 		exp, err := hex.DecodeString(c.expected)
 		if err != nil {
 			return fmt.Errorf("%s: invalid hex in endorsement: %w", c.name, err)
@@ -421,6 +431,10 @@ func validateTDXMeasurements(quote *pb.QuoteV4, endorsement *TDXEndorsement) err
 			return fmt.Errorf("%s mismatch: expected %s, got %s", c.name,
 				hex.EncodeToString(exp), hex.EncodeToString(c.actual))
 		}
+	}
+
+	if checked == 0 {
+		return fmt.Errorf("TDX endorsement has no measurements (all fields empty)")
 	}
 
 	return nil
@@ -438,6 +452,9 @@ func getRTMR(body *pb.TDQuoteBody, idx int) []byte {
 // values from an endorsement.
 func validateTPMMeasurements(pcrs map[int]hexbytes.Bytes, endorsement *PCREndorsement) error {
 	for idx, expectedHex := range endorsement.Measurements.PCRs {
+		if expectedHex == "" {
+			return fmt.Errorf("PCR%d: empty value in endorsement", idx)
+		}
 		expected, err := hex.DecodeString(expectedHex)
 		if err != nil {
 			return fmt.Errorf("PCR%d: invalid hex in endorsement: %w", idx, err)

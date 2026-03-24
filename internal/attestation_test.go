@@ -816,3 +816,29 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		}
 	})
 }
+
+// --- Fuzz tests ---
+
+// FuzzExtractXFCCHash ensures extractXFCCHash never panics on
+// arbitrary header values. XFCC headers come from untrusted proxies.
+func FuzzExtractXFCCHash(f *testing.F) {
+	f.Add("")
+	f.Add("Hash=abcd1234")
+	f.Add("Hash=aaaa,Hash=bbbb")
+	f.Add("By=spiffe://example;Hash=1234;URI=spiffe://x")
+	f.Add(",,,;;;===")
+	f.Fuzz(func(t *testing.T, input string) {
+		extractXFCCHash(input)
+	})
+}
+
+// FuzzIsValidHexFingerprint ensures isValidHexFingerprint never panics.
+func FuzzIsValidHexFingerprint(f *testing.F) {
+	f.Add("")
+	f.Add("abcd1234")
+	f.Add("zzzz")
+	f.Add("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+	f.Fuzz(func(t *testing.T, input string) {
+		isValidHexFingerprint(input)
+	})
+}

@@ -439,6 +439,7 @@ func TestParseByteSize(t *testing.T) {
 		{"", 0, true},
 		{"abc", 0, true},
 		{"-1MiB", 0, true},
+		{"-5", 0, true},
 	}
 
 	for _, tt := range tests {
@@ -1043,6 +1044,40 @@ func TestValidateDependencyEndorsements_EvidenceButNoEndorsement(t *testing.T) {
 	}
 }
 
+func TestValidateDependencyEndorsements_SEVSNPNilParsedEvidence(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hex := strings.Repeat("dd", 48)
+	doc := &EndorsementDocument{SEVSNP: &hex}
+	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
+
+	reportData := &AttestationReportData{
+		Endorsements: []string{"https://dep.example.com/e.json"},
+	}
+	dataJSON, _ := json.Marshal(reportData)
+	report := &AttestationReport{
+		Evidence: []*AttestationEvidence{{Kind: "sevsnp", Blob: []byte("fake")}},
+		Data:     json.RawMessage(dataJSON),
+	}
+
+	s := &Server{
+		cfg:       &Config{EndorsementClientTimeout: 5 * time.Second},
+		httpCache: cache,
+	}
+	parsed := &parsedDependencyEvidence{} // sevSNPReport is nil
+
+	err = s.validateDependencyEndorsements(context.Background(), report, parsed)
+	if err == nil {
+		t.Fatal("expected error for nil parsed evidence")
+	}
+	if !contains(err.Error(), "sevsnp") || !contains(err.Error(), "no parsed evidence") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestValidateDependencyEndorsements_TPMData(t *testing.T) {
 	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
@@ -1078,6 +1113,429 @@ func TestValidateDependencyEndorsements_TPMData(t *testing.T) {
 	if err := s.validateDependencyEndorsements(context.Background(), report, parsed); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+// --- validateDependencyEndorsements: additional evidence paths ---
+
+func TestValidateDependencyEndorsements_NitroNSM(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc := &EndorsementDocument{
+		NitroNSM: &PCREndorsement{Measurements: PCRGoldenValues{
+			PCRs: map[int]string{0: "aabb", 1: "ccdd"},
+		}},
+	}
+	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
+
+	reportData := &AttestationReportData{
+		Endorsements: []string{"https://dep.example.com/e.json"},
+	}
+	dataJSON, _ := json.Marshal(reportData)
+
+	t.Run("match", func(t *testing.T) {
+		report := &AttestationReport{
+			Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
+			Data:     json.RawMessage(dataJSON),
+		}
+		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
+		parsed := &parsedDependencyEvidence{
+			nitroNSMDoc: &nitro.AttestationDocument{
+				PCRs: map[int][]byte{0: {0xaa, 0xbb}, 1: {0xcc, 0xdd}},
+			},
+		}
+		if err := s.validateDependencyEndorsements(context.Background(), report, parsed); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("mismatch", func(t *testing.T) {
+		report := &AttestationReport{
+			Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
+			Data:     json.RawMessage(dataJSON),
+		}
+		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
+		parsed := &parsedDependencyEvidence{
+			nitroNSMDoc: &nitro.AttestationDocument{
+				PCRs: map[int][]byte{0: {0xff, 0xff}, 1: {0xcc, 0xdd}},
+			},
+		}
+		err := s.validateDependencyEndorsements(context.Background(), report, parsed)
+		if err == nil {
+			t.Fatal("expected error for mismatch")
+		}
+		if !contains(err.Error(), "nitronsm") {
+			t.Errorf("error %q does not mention nitronsm", err)
+		}
+	})
+
+	t.Run("nil parsed evidence", func(t *testing.T) {
+		report := &AttestationReport{
+			Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
+			Data:     json.RawMessage(dataJSON),
+		}
+		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
+		parsed := &parsedDependencyEvidence{}
+		err := s.validateDependencyEndorsements(context.Background(), report, parsed)
+		if err == nil {
+			t.Fatal("expected error for nil parsed evidence")
+		}
+		if !contains(err.Error(), "no parsed evidence") {
+			t.Errorf("error %q does not mention no parsed evidence", err)
+		}
+	})
+}
+
+func TestValidateDependencyEndorsements_NitroTPM(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc := &EndorsementDocument{
+		NitroTPM: &PCREndorsement{Measurements: PCRGoldenValues{
+			PCRs: map[int]string{4: "1122"},
+		}},
+	}
+	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
+
+	reportData := &AttestationReportData{
+		Endorsements: []string{"https://dep.example.com/e.json"},
+	}
+	dataJSON, _ := json.Marshal(reportData)
+
+	t.Run("match", func(t *testing.T) {
+		report := &AttestationReport{
+			Evidence: []*AttestationEvidence{{Kind: "nitrotpm", Blob: []byte("fake")}},
+			Data:     json.RawMessage(dataJSON),
+		}
+		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
+		parsed := &parsedDependencyEvidence{
+			nitroTPMDoc: &nitro.AttestationDocument{
+				NitroTPMPCRs: map[int][]byte{4: {0x11, 0x22}},
+			},
+		}
+		if err := s.validateDependencyEndorsements(context.Background(), report, parsed); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("no endorsement measurements", func(t *testing.T) {
+		emptyDoc := &EndorsementDocument{}
+		emptyCache, _ := newFetcherCache(100 << 20)
+		emptyCache.setGroup([]string{"https://dep.example.com/e.json"}, emptyDoc, 100, time.Minute)
+
+		report := &AttestationReport{
+			Evidence: []*AttestationEvidence{{Kind: "nitrotpm", Blob: []byte("fake")}},
+			Data:     json.RawMessage(dataJSON),
+		}
+		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: emptyCache}
+		parsed := &parsedDependencyEvidence{
+			nitroTPMDoc: &nitro.AttestationDocument{NitroTPMPCRs: map[int][]byte{4: {0x11}}},
+		}
+		err := s.validateDependencyEndorsements(context.Background(), report, parsed)
+		if err == nil {
+			t.Fatal("expected error when endorsement has no measurements")
+		}
+		if !contains(err.Error(), "nitrotpm") || !contains(err.Error(), "no measurements") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestValidateDependencyEndorsements_TDX(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mrtdHex := strings.Repeat("11", 48)
+	doc := &EndorsementDocument{
+		TDX: &TDXEndorsement{MRTD: mrtdHex},
+	}
+	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
+
+	reportData := &AttestationReportData{
+		Endorsements: []string{"https://dep.example.com/e.json"},
+	}
+	dataJSON, _ := json.Marshal(reportData)
+
+	t.Run("match", func(t *testing.T) {
+		report := &AttestationReport{
+			Evidence: []*AttestationEvidence{{Kind: "tdx", Blob: []byte("fake")}},
+			Data:     json.RawMessage(dataJSON),
+		}
+		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
+		parsed := &parsedDependencyEvidence{
+			tdxQuote: &pb.QuoteV4{TdQuoteBody: &pb.TDQuoteBody{MrTd: bytes.Repeat([]byte{0x11}, 48)}},
+		}
+		if err := s.validateDependencyEndorsements(context.Background(), report, parsed); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("mismatch", func(t *testing.T) {
+		report := &AttestationReport{
+			Evidence: []*AttestationEvidence{{Kind: "tdx", Blob: []byte("fake")}},
+			Data:     json.RawMessage(dataJSON),
+		}
+		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
+		parsed := &parsedDependencyEvidence{
+			tdxQuote: &pb.QuoteV4{TdQuoteBody: &pb.TDQuoteBody{MrTd: bytes.Repeat([]byte{0xff}, 48)}},
+		}
+		err := s.validateDependencyEndorsements(context.Background(), report, parsed)
+		if err == nil {
+			t.Fatal("expected error for mismatch")
+		}
+		if !contains(err.Error(), "tdx") {
+			t.Errorf("error %q does not mention tdx", err)
+		}
+	})
+
+	t.Run("nil parsed evidence", func(t *testing.T) {
+		report := &AttestationReport{
+			Evidence: []*AttestationEvidence{{Kind: "tdx", Blob: []byte("fake")}},
+			Data:     json.RawMessage(dataJSON),
+		}
+		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
+		parsed := &parsedDependencyEvidence{}
+		err := s.validateDependencyEndorsements(context.Background(), report, parsed)
+		if err == nil {
+			t.Fatal("expected error for nil parsed evidence")
+		}
+		if !contains(err.Error(), "no parsed evidence") {
+			t.Errorf("error %q does not mention no parsed evidence", err)
+		}
+	})
+}
+
+func TestValidateDependencyEndorsements_TPMNoEndorsement(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc := &EndorsementDocument{} // no TPM field
+	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
+
+	reportData := &AttestationReportData{
+		Endorsements: []string{"https://dep.example.com/e.json"},
+		TPMData: &TPMData{
+			Digest: "SHA256",
+			PCRs:   map[int]hexbytes.Bytes{0: {0xaa}},
+		},
+	}
+	dataJSON, _ := json.Marshal(reportData)
+	report := &AttestationReport{
+		Evidence: []*AttestationEvidence{},
+		Data:     json.RawMessage(dataJSON),
+	}
+
+	s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
+	parsed := &parsedDependencyEvidence{}
+
+	err = s.validateDependencyEndorsements(context.Background(), report, parsed)
+	if err == nil {
+		t.Fatal("expected error when TPM data has no endorsement")
+	}
+	if !contains(err.Error(), "tpm") || !contains(err.Error(), "no measurements") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- Edge case tests for measurement comparison ---
+
+func TestComparePCRs_EmptyEndorsementValue(t *testing.T) {
+	actual := map[int][]byte{0: {}}
+	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
+		PCRs: map[int]string{0: ""},
+	}}
+	err := comparePCRs(actual, endorsement)
+	if err == nil {
+		t.Fatal("expected error for empty endorsement value")
+	}
+	if !contains(err.Error(), "empty value") {
+		t.Errorf("error %q does not mention empty value", err)
+	}
+}
+
+func TestValidateSEVSNPMeasurement_Empty(t *testing.T) {
+	report := &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)}
+	err := validateSEVSNPMeasurement(report, "")
+	if err == nil {
+		t.Fatal("expected error for empty endorsement measurement")
+	}
+	if !contains(err.Error(), "empty measurement") {
+		t.Errorf("error %q does not mention empty measurement", err)
+	}
+}
+
+func TestValidateTPMMeasurements_EmptyEndorsementValue(t *testing.T) {
+	pcrs := map[int]hexbytes.Bytes{0: {0xaa}}
+	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
+		PCRs: map[int]string{0: ""},
+	}}
+	err := validateTPMMeasurements(pcrs, endorsement)
+	if err == nil {
+		t.Fatal("expected error for empty endorsement value")
+	}
+	if !contains(err.Error(), "empty value") {
+		t.Errorf("error %q does not mention empty value", err)
+	}
+}
+
+func TestComparePCRs_InvalidHexInEndorsement(t *testing.T) {
+	actual := map[int][]byte{0: {0xaa, 0xbb}}
+	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
+		PCRs: map[int]string{0: "not-valid-hex"},
+	}}
+	err := comparePCRs(actual, endorsement)
+	if err == nil {
+		t.Fatal("expected error for invalid hex in endorsement")
+	}
+	if !contains(err.Error(), "invalid hex") {
+		t.Errorf("error %q does not mention invalid hex", err)
+	}
+}
+
+func TestValidateTPMMeasurements_InvalidHex(t *testing.T) {
+	pcrs := map[int]hexbytes.Bytes{0: {0xaa}}
+	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
+		PCRs: map[int]string{0: "zzzz"},
+	}}
+	err := validateTPMMeasurements(pcrs, endorsement)
+	if err == nil {
+		t.Fatal("expected error for invalid hex in endorsement")
+	}
+	if !contains(err.Error(), "invalid hex") {
+		t.Errorf("error %q does not mention invalid hex", err)
+	}
+}
+
+func TestValidateTPMMeasurements_MissingPCR(t *testing.T) {
+	pcrs := map[int]hexbytes.Bytes{0: {0xaa}}
+	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
+		PCRs: map[int]string{5: "aabb"},
+	}}
+	err := validateTPMMeasurements(pcrs, endorsement)
+	if err == nil {
+		t.Fatal("expected error for missing PCR in evidence")
+	}
+	if !contains(err.Error(), "missing from evidence") {
+		t.Errorf("error %q does not mention missing from evidence", err)
+	}
+}
+
+func TestValidateTDXMeasurements_AllFieldsEmpty(t *testing.T) {
+	quote := &pb.QuoteV4{
+		TdQuoteBody: &pb.TDQuoteBody{
+			MrTd:  bytes.Repeat([]byte{0x11}, 48),
+			Rtmrs: [][]byte{bytes.Repeat([]byte{0x22}, 48)},
+		},
+	}
+	endorsement := &TDXEndorsement{} // all fields empty
+	err := validateTDXMeasurements(quote, endorsement)
+	if err == nil {
+		t.Fatal("expected error for endorsement with all empty fields")
+	}
+	if !contains(err.Error(), "no measurements") {
+		t.Errorf("error %q does not mention no measurements", err)
+	}
+}
+
+func TestValidateTDXMeasurements_InvalidHex(t *testing.T) {
+	quote := &pb.QuoteV4{
+		TdQuoteBody: &pb.TDQuoteBody{
+			MrTd: bytes.Repeat([]byte{0x11}, 48),
+		},
+	}
+	endorsement := &TDXEndorsement{MRTD: "not-valid-hex"}
+	err := validateTDXMeasurements(quote, endorsement)
+	if err == nil {
+		t.Fatal("expected error for invalid hex")
+	}
+	if !contains(err.Error(), "invalid hex") {
+		t.Errorf("error %q does not mention invalid hex", err)
+	}
+}
+
+func TestGetRTMR_OutOfRange(t *testing.T) {
+	body := &pb.TDQuoteBody{
+		Rtmrs: [][]byte{{0x01}, {0x02}},
+	}
+	if got := getRTMR(body, 5); got != nil {
+		t.Errorf("getRTMR(body, 5) = %v, want nil", got)
+	}
+	if got := getRTMR(body, 0); !bytes.Equal(got, []byte{0x01}) {
+		t.Errorf("getRTMR(body, 0) = %v, want [0x01]", got)
+	}
+}
+
+func TestPCRGoldenValues_UnmarshalJSON_NegativeIndex(t *testing.T) {
+	input := `{"HashAlgorithm":"SHA384","PCR-1":"aabb"}`
+	var v PCRGoldenValues
+	err := json.Unmarshal([]byte(input), &v)
+	if err == nil {
+		t.Fatal("expected error for negative PCR index")
+	}
+}
+
+func TestPCRGoldenValues_UnmarshalJSON_InvalidJSON(t *testing.T) {
+	var v PCRGoldenValues
+	err := json.Unmarshal([]byte(`not json`), &v)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// --- Fuzz tests ---
+
+// FuzzParseCacheTTL ensures parseCacheTTL never panics on arbitrary
+// HTTP headers. Cache-Control headers come from untrusted CDN/origin servers.
+func FuzzParseCacheTTL(f *testing.F) {
+	f.Add("max-age=600")
+	f.Add("no-cache, no-store")
+	f.Add("public, max-age=86400, s-maxage=3600")
+	f.Add("")
+	f.Add("max-age=abc")
+	f.Add("max-age=-1")
+	f.Add("max-age=99999999999999")
+	f.Fuzz(func(t *testing.T, cc string) {
+		h := http.Header{}
+		h.Set("Cache-Control", cc)
+		parseCacheTTL(h)
+	})
+}
+
+// FuzzParseByteSize ensures parseByteSize never panics on arbitrary input.
+func FuzzParseByteSize(f *testing.F) {
+	f.Add("100MiB")
+	f.Add("1GiB")
+	f.Add("")
+	f.Add("0")
+	f.Add("-1")
+	f.Add("abc")
+	f.Add("999999999999999999999TiB")
+	f.Fuzz(func(t *testing.T, input string) {
+		parseByteSize(input)
+	})
+}
+
+// FuzzPCRGoldenValues_UnmarshalJSON ensures PCR golden value parsing
+// never panics on arbitrary JSON. Endorsement documents come from
+// external URLs.
+func FuzzPCRGoldenValues_UnmarshalJSON(f *testing.F) {
+	f.Add(`{"HashAlgorithm":"SHA384","PCR0":"aabb"}`)
+	f.Add(`{}`)
+	f.Add(`{"PCR99":"ff"}`)
+	f.Add(`not json`)
+	f.Add(`{"PCR-1":"aa","PCRabc":"bb"}`)
+	f.Fuzz(func(t *testing.T, input string) {
+		var v PCRGoldenValues
+		json.Unmarshal([]byte(input), &v)
+	})
 }
 
 func strPtr(s string) *string { return &s }

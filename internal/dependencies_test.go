@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -711,6 +712,117 @@ func TestCycleDetection_DependencyReturns409(t *testing.T) {
 	_, err := s.fetchDependencies("aabb", "req-id", "")
 	if err == nil {
 		t.Fatal("expected error when dependency returns 409, got nil")
+	}
+}
+
+// --- error classification and upstream error code tests ---
+
+func TestUpstreamErrorCode(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"timeout error", &errTimeout{err: fmt.Errorf("dial timeout")}, 504},
+		{"connection error", &errConnection{err: fmt.Errorf("connection refused")}, 503},
+		{"generic error", fmt.Errorf("something failed"), 500},
+		{"wrapped timeout", fmt.Errorf("outer: %w", &errTimeout{err: fmt.Errorf("inner timeout")}), 504},
+		{"wrapped connection", fmt.Errorf("outer: %w", &errConnection{err: fmt.Errorf("inner conn")}), 503},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := upstreamErrorCode(tt.err)
+			if got != tt.want {
+				t.Errorf("upstreamErrorCode() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyNetError(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		if got := classifyNetError(nil); got != nil {
+			t.Errorf("classifyNetError(nil) = %v, want nil", got)
+		}
+	})
+
+	t.Run("deadline exceeded", func(t *testing.T) {
+		err := classifyNetError(context.DeadlineExceeded)
+		var te *errTimeout
+		if !errors.As(err, &te) {
+			t.Errorf("expected *errTimeout, got %T", err)
+		}
+	})
+
+	t.Run("url error", func(t *testing.T) {
+		err := classifyNetError(&url.Error{Op: "Get", URL: "http://x", Err: fmt.Errorf("refused")})
+		var ce *errConnection
+		if !errors.As(err, &ce) {
+			t.Errorf("expected *errConnection, got %T", err)
+		}
+	})
+
+	t.Run("unclassified error", func(t *testing.T) {
+		orig := fmt.Errorf("random error")
+		err := classifyNetError(orig)
+		if err != orig {
+			t.Errorf("expected original error returned as-is")
+		}
+	})
+}
+
+func TestWrapUpstreamError(t *testing.T) {
+	t.Run("preserves timeout", func(t *testing.T) {
+		cause := &errTimeout{err: fmt.Errorf("dial timeout")}
+		wrapped := wrapUpstreamError(cause, "dependency failed")
+		var te *errTimeout
+		if !errors.As(wrapped, &te) {
+			t.Errorf("expected *errTimeout, got %T", wrapped)
+		}
+		if wrapped.Error() != "dependency failed" {
+			t.Errorf("message = %q, want %q", wrapped.Error(), "dependency failed")
+		}
+	})
+
+	t.Run("preserves connection", func(t *testing.T) {
+		cause := &errConnection{err: fmt.Errorf("refused")}
+		wrapped := wrapUpstreamError(cause, "dependency failed")
+		var ce *errConnection
+		if !errors.As(wrapped, &ce) {
+			t.Errorf("expected *errConnection, got %T", wrapped)
+		}
+	})
+
+	t.Run("generic error", func(t *testing.T) {
+		cause := fmt.Errorf("something")
+		wrapped := wrapUpstreamError(cause, "dependency failed")
+		var te *errTimeout
+		var ce *errConnection
+		if errors.As(wrapped, &te) || errors.As(wrapped, &ce) {
+			t.Errorf("expected plain error, got typed")
+		}
+	})
+}
+
+func TestErrTimeoutMethods(t *testing.T) {
+	inner := fmt.Errorf("inner timeout")
+	e := &errTimeout{err: inner}
+	if e.Error() != "inner timeout" {
+		t.Errorf("Error() = %q, want %q", e.Error(), "inner timeout")
+	}
+	if e.Unwrap() != inner {
+		t.Error("Unwrap() did not return inner error")
+	}
+}
+
+func TestErrConnectionMethods(t *testing.T) {
+	inner := fmt.Errorf("connection refused")
+	e := &errConnection{err: inner}
+	if e.Error() != "connection refused" {
+		t.Errorf("Error() = %q, want %q", e.Error(), "connection refused")
+	}
+	if e.Unwrap() != inner {
+		t.Error("Unwrap() did not return inner error")
 	}
 }
 
