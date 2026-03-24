@@ -14,6 +14,15 @@ import (
 	"github.com/spf13/viper"
 )
 
+// CosignBuildSignerConfig holds optional overrides for BuildSignerURI
+// matching during cosign OID validation. When set, BuildSignerDigest is
+// also skipped (it changes per-commit). When unset, both fields are
+// compared for exact match against BuildInfo.
+type CosignBuildSignerConfig struct {
+	URI      string
+	URIRegex *regexp.Regexp // compiled from string config; nil if unset
+}
+
 // Config holds the resolved server configuration.
 type Config struct {
 	BindHost                 string
@@ -34,7 +43,10 @@ type Config struct {
 	DependencyEndpoints      []*url.URL
 	EndorsementDNSSEC        bool
 	EndorsementClientTimeout time.Duration
-	EndorsementCacheSize     int64
+	HTTPCacheSize            int64
+	CosignVerify             bool
+	CosignURLSuffix          string
+	CosignBuildSigner        CosignBuildSignerConfig
 }
 
 // TPMConfig holds the configuration for generic TPM PCR reading.
@@ -90,9 +102,20 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		endorsementTimeout = 10 * time.Second
 	}
-	endorsementCacheSize, err := parseByteSize(viper.GetString("endorsements.cache.size"))
+	httpCacheSize, err := parseByteSize(viper.GetString("http.cache.size"))
 	if err != nil {
-		endorsementCacheSize = 100 << 20
+		httpCacheSize = 100 << 20
+	}
+
+	cosignBuildSigner := CosignBuildSignerConfig{
+		URI: viper.GetString("endorsements.cosign.build_signer.uri"),
+	}
+	if regexStr := viper.GetString("endorsements.cosign.build_signer.uri_regex"); regexStr != "" {
+		compiled, err := regexp.Compile(regexStr)
+		if err != nil {
+			return nil, fmt.Errorf("endorsements.cosign.build_signer.uri_regex: invalid regex: %w", err)
+		}
+		cosignBuildSigner.URIRegex = compiled
 	}
 
 	return &Config{
@@ -114,7 +137,10 @@ func LoadConfig() (*Config, error) {
 		DependencyEndpoints:      depEndpoints,
 		EndorsementDNSSEC:        viper.GetBool("endorsements.dnssec"),
 		EndorsementClientTimeout: endorsementTimeout,
-		EndorsementCacheSize:     endorsementCacheSize,
+		HTTPCacheSize:            httpCacheSize,
+		CosignVerify:             viper.GetBool("endorsements.cosign.verify"),
+		CosignURLSuffix:          viper.GetString("endorsements.cosign.url_suffix"),
+		CosignBuildSigner:        cosignBuildSigner,
 	}, nil
 }
 

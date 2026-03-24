@@ -4,182 +4,39 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"fmt"
-	"io"
-	"math"
-	"net"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 	"time"
 
-	ristretto "github.com/dgraph-io/ristretto/v2"
 	"github.com/goccy/go-json"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
 	pb "github.com/google/go-tdx-guest/proto/tdx"
-	_ "golang.org/x/crypto/x509roots/fallback"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/eternisai/attestation-server/pkg/hexbytes"
 	"github.com/eternisai/attestation-server/pkg/nitro"
 )
 
-const (
-	endorsementDialTimeout           = 3 * time.Second
-	endorsementTLSHandshakeTimeout   = 5 * time.Second
-	endorsementResponseHeaderTimeout = 5 * time.Second
-	endorsementMaxResponseBytes      = 1 << 20 // 1 MiB
-
-	endorsementRetryInitial = 500 * time.Millisecond
-	endorsementRetryMax     = 5 * time.Second
-
-	endorsementDefaultTTL = 30 * time.Minute
-	endorsementMaxTTL     = 24 * time.Hour
-)
-
-// endorsementCache wraps a ristretto cache for endorsement documents.
-// Cache keys are URL strings; deduplication is achieved by storing the same
-// *EndorsementDocument pointer under all URLs from a fetch batch.
-type endorsementCache struct {
-	cache *ristretto.Cache[string, *EndorsementDocument]
-}
-
-func newEndorsementCache(maxBytes int64) (*endorsementCache, error) {
-	cache, err := ristretto.NewCache(&ristretto.Config[string, *EndorsementDocument]{
-		NumCounters: 10000,
-		MaxCost:     maxBytes,
-		BufferItems: 64,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("creating endorsement cache: %w", err)
-	}
-	return &endorsementCache{cache: cache}, nil
-}
-
-func (ec *endorsementCache) get(url string) (*EndorsementDocument, bool) {
-	return ec.cache.Get(url)
-}
-
-// setGroup stores the same document pointer under all URL keys. Cost is
-// charged only on the first key to avoid double-counting identical documents.
-func (ec *endorsementCache) setGroup(urls []string, doc *EndorsementDocument, rawSize int, ttl time.Duration) {
-	for i, u := range urls {
-		cost := int64(0)
-		if i == 0 {
-			cost = int64(rawSize)
-		}
-		ec.cache.SetWithTTL(u, doc, cost, ttl)
-	}
-	ec.cache.Wait()
-}
-
-// endorsementHTTPClient builds an HTTPS client for fetching endorsement
-// documents from public URLs. Uses system/Mozilla root CAs (via the
-// x509roots/fallback blank import). If a DNSSEC resolver is configured,
-// it is wired into the transport so DNS queries go through the same
-// upstream servers used for DNSSEC validation.
-func (s *Server) endorsementHTTPClient() *http.Client {
-	roots, err := x509.SystemCertPool()
-	if err != nil {
-		roots = x509.NewCertPool()
-	}
-
-	dialer := &net.Dialer{
-		Timeout: endorsementDialTimeout,
-	}
-	if s.dnssecResolver != nil {
-		dialer.Resolver = s.dnssecResolver.NetResolver()
-	}
-
-	return &http.Client{
-		Timeout: s.cfg.EndorsementClientTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig:       &tls.Config{RootCAs: roots},
-			TLSHandshakeTimeout:   endorsementTLSHandshakeTimeout,
-			ResponseHeaderTimeout: endorsementResponseHeaderTimeout,
-			DialContext:           dialer.DialContext,
-			DisableKeepAlives:     true,
-		},
-	}
-}
-
-// parseCacheTTL extracts a TTL from HTTP response headers. It checks
-// Cache-Control for max-age and no-cache/no-store, falls back to the
-// Expires header, and defaults to 30 minutes. TTL is capped at 24 hours.
-func parseCacheTTL(header http.Header) time.Duration {
-	if cc := header.Get("Cache-Control"); cc != "" {
-		lower := strings.ToLower(cc)
-		if strings.Contains(lower, "no-cache") || strings.Contains(lower, "no-store") {
-			return 0
-		}
-		for _, directive := range strings.Split(lower, ",") {
-			directive = strings.TrimSpace(directive)
-			if strings.HasPrefix(directive, "max-age=") {
-				if secs, err := strconv.Atoi(strings.TrimPrefix(directive, "max-age=")); err == nil && secs > 0 {
-					ttl := time.Duration(secs) * time.Second
-					if ttl > endorsementMaxTTL {
-						ttl = endorsementMaxTTL
-					}
-					return ttl
-				}
-			}
-		}
-	}
-
-	if exp := header.Get("Expires"); exp != "" {
-		if t, err := http.ParseTime(exp); err == nil {
-			now := time.Now()
-			if dateStr := header.Get("Date"); dateStr != "" {
-				if d, err := http.ParseTime(dateStr); err == nil {
-					now = d
-				}
-			}
-			ttl := t.Sub(now)
-			if ttl <= 0 {
-				return 0
-			}
-			if ttl > endorsementMaxTTL {
-				ttl = endorsementMaxTTL
-			}
-			return ttl
-		}
-	}
-
-	return endorsementDefaultTTL
-}
-
-// fetchResult holds the result of fetching a single endorsement URL.
-type fetchResult struct {
-	body   []byte
-	header http.Header
-}
-
-// fetchEndorsementDocuments fetches endorsement documents from all URLs in
-// parallel with retry, verifies byte-for-byte identity, parses the document,
-// and returns it with a TTL derived from Cache-Control headers.
-func (s *Server) fetchEndorsementDocuments(ctx context.Context, urls []*url.URL) (*EndorsementDocument, int, time.Duration, error) {
-	return s.fetchEndorsementDocumentsWithClient(ctx, urls, nil)
-}
-
-// fetchEndorsementDocumentsWithClient is the internal implementation that
-// accepts an optional HTTP client override (used in tests with httptest TLS servers).
-func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls []*url.URL, client *http.Client) (*EndorsementDocument, int, time.Duration, error) {
+// fetchEndorsementDocumentsWithClient fetches endorsement documents from all
+// URLs in parallel with retry, verifies byte-for-byte identity, parses the
+// document, and returns it alongside the raw bytes (needed for cosign
+// verification) and TTL derived from Cache-Control headers.
+//
+// The caller must set a context timeout — this function does not create one
+// internally so that the same deadline can cover both endorsement document
+// and cosign signature fetches.
+func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls []*url.URL, client *http.Client) (*EndorsementDocument, []byte, int, time.Duration, error) {
 	if len(urls) == 0 {
-		return nil, 0, 0, fmt.Errorf("no endorsement URLs configured")
+		return nil, nil, 0, 0, fmt.Errorf("no endorsement URLs configured")
 	}
 
 	for i, u := range urls {
 		if u.Scheme != "https" {
-			return nil, 0, 0, fmt.Errorf("endorsement URL %d: scheme must be https, got %q (%s)", i, u.Scheme, u.String())
+			return nil, nil, 0, 0, fmt.Errorf("endorsement URL %d: scheme must be https, got %q (%s)", i, u.Scheme, u.String())
 		}
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, s.cfg.EndorsementClientTimeout)
-	defer cancel()
 
 	// DNSSEC pre-validation for unique hosts
 	if s.dnssecResolver != nil {
@@ -191,13 +48,13 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 			}
 			seen[host] = true
 			if err := s.dnssecResolver.Validate(ctx, host); err != nil {
-				return nil, 0, 0, err
+				return nil, nil, 0, 0, err
 			}
 		}
 	}
 
 	if client == nil {
-		client = s.endorsementHTTPClient()
+		client = s.fetchHTTPClient()
 	}
 	g, gctx := errgroup.WithContext(ctx)
 	results := make([]fetchResult, len(urls))
@@ -214,7 +71,7 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 	}
 
 	if err := g.Wait(); err != nil {
-		return nil, 0, 0, err
+		return nil, nil, 0, 0, err
 	}
 
 	// Verify byte-for-byte identity across all responses
@@ -222,7 +79,7 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 	for i := 1; i < len(results); i++ {
 		h := sha256.Sum256(results[i].body)
 		if h != refHash {
-			return nil, 0, 0, fmt.Errorf("endorsement document mismatch: %s (sha256:%s) differs from %s (sha256:%s)",
+			return nil, nil, 0, 0, fmt.Errorf("endorsement document mismatch: %s (sha256:%s) differs from %s (sha256:%s)",
 				urls[i].String(), hex.EncodeToString(h[:8]),
 				urls[0].String(), hex.EncodeToString(refHash[:8]))
 		}
@@ -230,11 +87,11 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 
 	var doc EndorsementDocument
 	if err := json.Unmarshal(results[0].body, &doc); err != nil {
-		return nil, 0, 0, fmt.Errorf("parsing endorsement document: %w", err)
+		return nil, nil, 0, 0, fmt.Errorf("parsing endorsement document: %w", err)
 	}
 
 	// Use the most conservative (shortest) TTL across all responses
-	ttl := endorsementMaxTTL
+	ttl := fetchMaxTTL
 	for _, r := range results {
 		t := parseCacheTTL(r.header)
 		if t < ttl {
@@ -242,92 +99,81 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 		}
 	}
 	if ttl <= 0 {
-		ttl = endorsementDefaultTTL
+		ttl = fetchDefaultTTL
 	}
 
-	return &doc, len(results[0].body), ttl, nil
-}
-
-// fetchWithRetry fetches a URL with exponential backoff retry until the
-// context deadline.
-func fetchWithRetry(ctx context.Context, client *http.Client, u *url.URL) ([]byte, http.Header, error) {
-	backoff := endorsementRetryInitial
-	var lastErr error
-
-	for {
-		body, header, err := fetchOnce(ctx, client, u)
-		if err == nil {
-			return body, header, nil
-		}
-		lastErr = err
-
-		if ctx.Err() != nil {
-			return nil, nil, lastErr
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, nil, lastErr
-		case <-time.After(backoff):
-		}
-
-		backoff = time.Duration(math.Min(float64(backoff)*2, float64(endorsementRetryMax)))
-	}
-}
-
-func fetchOnce(ctx context.Context, client *http.Client, u *url.URL) ([]byte, http.Header, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, nil, classifyNetError(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, endorsementMaxResponseBytes))
-	if err != nil {
-		return nil, nil, classifyNetError(fmt.Errorf("reading response: %w", err))
-	}
-
-	return body, resp.Header, nil
+	return &doc, results[0].body, len(results[0].body), ttl, nil
 }
 
 // resolveEndorsements resolves endorsement documents from cache or fetches
-// them from the provided URLs. Shared by own-evidence and dependency paths.
-func (s *Server) resolveEndorsements(ctx context.Context, urls []*url.URL) (*EndorsementDocument, error) {
+// them from the provided URLs. When cosign verification is enabled, it also
+// fetches and verifies the cosign signature bundle. Shared by own-evidence
+// and dependency paths.
+func (s *Server) resolveEndorsements(ctx context.Context, urls []*url.URL) (*EndorsementDocument, *cosignResult, error) {
 	return s.resolveEndorsementsWithClient(ctx, urls, nil)
 }
 
 // resolveEndorsementsWithClient is the internal implementation that accepts
 // an optional HTTP client override (used in tests with httptest TLS servers).
-func (s *Server) resolveEndorsementsWithClient(ctx context.Context, urls []*url.URL, client *http.Client) (*EndorsementDocument, error) {
-	if s.endCache != nil {
-		if doc, ok := s.endCache.get(urls[0].String()); ok {
-			return doc, nil
+func (s *Server) resolveEndorsementsWithClient(ctx context.Context, urls []*url.URL, client *http.Client) (*EndorsementDocument, *cosignResult, error) {
+	// Fast path: check caches
+	if s.httpCache != nil {
+		if val, ok := s.httpCache.get(urls[0].String()); ok {
+			if doc, ok := val.(*EndorsementDocument); ok {
+				if !s.cfg.CosignVerify || s.sigstoreVerifier == nil {
+					return doc, nil, nil
+				}
+				sigURL := urls[0].String() + s.cfg.CosignURLSuffix
+				if crVal, crOk := s.httpCache.get(sigURL); crOk {
+					if cr, ok := crVal.(*cosignResult); ok {
+						return doc, cr, nil
+					}
+				}
+				// Cosign cache miss → need raw bytes → fall through to re-fetch
+			}
 		}
 	}
 
-	doc, rawSize, ttl, err := s.fetchEndorsementDocumentsWithClient(ctx, urls, client)
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.EndorsementClientTimeout)
+	defer cancel()
+
+	doc, rawBody, rawSize, ttl, err := s.fetchEndorsementDocumentsWithClient(ctx, urls, client)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	if s.endCache != nil {
-		urlStrs := make([]string, len(urls))
-		for i, u := range urls {
-			urlStrs[i] = u.String()
+	urlStrs := make([]string, len(urls))
+	for i, u := range urls {
+		urlStrs[i] = u.String()
+	}
+
+	if s.httpCache != nil {
+		s.httpCache.setGroup(urlStrs, doc, rawSize, ttl)
+	}
+
+	var cr *cosignResult
+	if s.cfg.CosignVerify && s.sigstoreVerifier != nil {
+		bundleBytes, sigRawSize, sigTTL, fetchErr := s.fetchCosignSignatures(ctx, urls, client)
+		if fetchErr != nil {
+			return nil, nil, fmt.Errorf("cosign signature fetch: %w", fetchErr)
 		}
-		s.endCache.setGroup(urlStrs, doc, rawSize, ttl)
+
+		cr, err = s.verifyCosignBundle(bundleBytes, rawBody)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cosign verification: %w", err)
+		}
+
+		cosignTTL := min(ttl, sigTTL)
+		sigURLStrs := make([]string, len(urls))
+		for i, u := range urls {
+			sigURLStrs[i] = u.String() + s.cfg.CosignURLSuffix
+		}
+		if s.httpCache != nil {
+			s.httpCache.setGroup(sigURLStrs, cr, sigRawSize, cosignTTL)
+		}
 	}
 
-	return doc, nil
+	return doc, cr, nil
 }
 
 // validateOwnEndorsements fetches (or retrieves from cache) endorsement
@@ -338,9 +184,15 @@ func (s *Server) validateOwnEndorsements(ctx context.Context) error {
 		return nil
 	}
 
-	doc, err := s.resolveEndorsements(ctx, s.endorsements)
+	doc, cr, err := s.resolveEndorsements(ctx, s.endorsements)
 	if err != nil {
 		return err
+	}
+
+	if cr != nil {
+		if err := s.validateCosignOIDs(cr, s.buildInfo); err != nil {
+			return fmt.Errorf("cosign: %w", err)
+		}
 	}
 
 	return validateEndorsementsAgainstEvidence(doc, s.cfg, s.selfAttestation)
@@ -407,6 +259,9 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 	}
 
 	if len(reportData.Endorsements) == 0 {
+		if s.cfg.CosignVerify {
+			return fmt.Errorf("cosign verification enabled but dependency has no endorsement URLs")
+		}
 		return nil
 	}
 
@@ -419,9 +274,15 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 		urls = append(urls, u)
 	}
 
-	doc, err := s.resolveEndorsements(ctx, urls)
+	doc, cr, err := s.resolveEndorsements(ctx, urls)
 	if err != nil {
 		return err
+	}
+
+	if cr != nil {
+		if err := s.validateCosignOIDs(cr, reportData.BuildInfo); err != nil {
+			return fmt.Errorf("cosign: %w", err)
+		}
 	}
 
 	// Validate each evidence entry present in the dependency report

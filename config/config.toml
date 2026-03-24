@@ -35,8 +35,16 @@ dnssec = false  # require DNSSEC validation for endorsement URL hosts
 [endorsements.client]
 timeout = "10s"  # overall fetch timeout with retries
 
-[endorsements.cache]
-size = "100MiB"  # max memory for endorsement document cache
+[endorsements.cosign]
+verify     = true   # verify cosign signatures on endorsement documents
+url_suffix = ".sig" # suffix appended to endorsement URL to get signature bundle
+
+[endorsements.cosign.build_signer]
+uri       = ""  # exact match override for BuildSignerURI OID (leave empty for BuildInfo match)
+uri_regex = ""  # regex match override for BuildSignerURI OID (ignored if uri is set)
+
+[http.cache]
+size = "100MiB"  # max memory for shared HTTP fetch cache (endorsements + cosign signatures)
 
 [dependencies]
 # URLs of dependency attestation servers whose reports are fetched,

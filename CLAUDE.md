@@ -16,7 +16,9 @@ cmd/root.go                # cobra root command; initializes config, logger, and
 internal/attestation.go    # GET /api/v1/attestation handler and helpers (package app)
 internal/config.go         # Config struct and LoadConfig() (package app)
 internal/dependencies.go   # Transitive dependency attestation: parallel fetch, verify, cycle detection (package app)
-internal/endorsements.go   # Endorsement document fetching, caching, DNSSEC, measurement validation (package app)
+internal/cosign.go         # Cosign signature verification: bundle fetch, Sigstore/Rekor verification, Fulcio OID extraction + validation (package app)
+internal/endorsements.go   # Endorsement document fetching, DNSSEC, measurement validation, cosign integration (package app)
+internal/fetch.go          # Generic HTTP fetch with retry, cache (ristretto), TTL parsing — shared by endorsements and cosign (package app)
 internal/logging.go        # NewLogger() (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS certificate/CA loading, verification, and hot-reload (package app)
@@ -82,7 +84,15 @@ dnssec = false
 [endorsements.client]
 timeout = "10s"
 
-[endorsements.cache]
+[endorsements.cosign]
+verify     = true
+url_suffix = ".sig"
+
+[endorsements.cosign.build_signer]
+uri       = ""
+uri_regex = ""
+
+[http.cache]
 size = "100MiB"
 
 [dependencies]
@@ -137,8 +147,12 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Comma-separated environment variable names to include in report (unique) |
 | `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints are verified against the private CA bundle (mTLS); HTTP endpoints must be proxied through a local mTLS-enabling proxy |
 | `ATTESTATION_SERVER_ENDORSEMENTS_DNSSEC` | `endorsements.dnssec` | `false` | Require strict DNSSEC validation for endorsement URL hosts |
-| `ATTESTATION_SERVER_ENDORSEMENTS_CLIENT_TIMEOUT` | `endorsements.client.timeout` | `10s` | Overall timeout for fetching endorsement documents (with retries) |
-| `ATTESTATION_SERVER_ENDORSEMENTS_CACHE_SIZE` | `endorsements.cache.size` | `100MiB` | Maximum memory for the endorsement document cache (ristretto) |
+| `ATTESTATION_SERVER_ENDORSEMENTS_CLIENT_TIMEOUT` | `endorsements.client.timeout` | `10s` | Overall timeout for fetching endorsement documents and cosign signatures (with retries) |
+| `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_VERIFY` | `endorsements.cosign.verify` | `true` | Verify cosign signatures on endorsement documents using Sigstore public-good infrastructure |
+| `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_URL_SUFFIX` | `endorsements.cosign.url_suffix` | `.sig` | Suffix appended to endorsement URL to fetch the cosign signature bundle |
+| `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI` | `endorsements.cosign.build_signer.uri` | — | Exact match override for BuildSignerURI Fulcio OID (takes precedence over `uri_regex`) |
+| `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI_REGEX` | `endorsements.cosign.build_signer.uri_regex` | — | Regex match override for BuildSignerURI Fulcio OID (ignored if `uri` is set) |
+| `ATTESTATION_SERVER_HTTP_CACHE_SIZE` | `http.cache.size` | `100MiB` | Maximum memory for the shared HTTP fetch cache (endorsements + cosign signatures, ristretto) |
 
 List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS`) support comma-separated values: `VAR=a,b,c`. Spaces around commas are trimmed.
 
@@ -255,7 +269,29 @@ Uses system/Mozilla root CAs (via `golang.org/x/crypto/x509roots/fallback` blank
 
 ### Endorsement cache
 
-Uses `dgraph-io/ristretto/v2` with URL-string keys. When multiple URLs resolve to the same document (verified byte-for-byte), the same `*EndorsementDocument` pointer is stored under all URL keys (cost charged once). TTL is derived from Cache-Control `max-age` (capped at 24h, default 30m).
+Uses `dgraph-io/ristretto/v2` with URL-string keys in a shared `fetcherCache` (stores both `*EndorsementDocument` and `*cosignResult` values — endorsement URLs and signature URLs don't collide). When multiple URLs resolve to the same document (verified byte-for-byte), the same pointer is stored under all URL keys (cost charged once). TTL is derived from Cache-Control `max-age` (capped at 24h, default 30m).
+
+### Cosign endorsement verification
+
+When `endorsements.cosign.verify` is enabled (default: `true`), the server verifies cosign signatures on endorsement documents using the Sigstore public-good infrastructure (Fulcio + Rekor). Only Cosign v3 protobuf bundles (from `cosign sign-blob --bundle`) are supported.
+
+#### Verification flow
+
+After fetching an endorsement document, a corresponding signature bundle is fetched from the same URL with the configured suffix appended (default `.sig`). The single `endorsements.client.timeout` covers both fetches (not extended for the signature). Signature bundles undergo the same multi-URL byte-for-byte identity check as endorsement documents.
+
+Verification performs a full online Rekor inclusion proof check using an auto-updating Sigstore TUF client (`root.NewLiveTrustedRoot`) that refreshes roots in the background. Upon successful verification, Fulcio OID extensions are extracted from the signing certificate and validated against the server's `BuildInfo`:
+
+- **All OID fields** except BuildSignerURI and BuildSignerDigest: exact match against corresponding BuildInfo field
+- **BuildSignerURI**: matched against `endorsements.cosign.build_signer.uri` (exact) or `.uri_regex` (regex) if configured; `.uri` takes precedence if both set (warning logged). When neither is configured, exact match against `BuildInfo.BuildSignerURI`
+- **BuildSignerDigest**: exact match against `BuildInfo.BuildSignerDigest` when no `build_signer` config is set; **skipped** when any `build_signer` config is set (digest changes per-commit)
+- **DeploymentEnvironment**: not checked (no standard Fulcio OID)
+- Fulcio's `SourceRepositoryVisibilityAtSigning` maps to BuildInfo's `SourceRepositoryVisibility`
+
+When cosign verification is enabled, the server requires endorsement URLs to be configured (non-empty `paths.endorsements`); startup fails otherwise. Dependency attestation reports are also required to include non-empty endorsement URL lists — a dependency with no endorsement URLs is rejected.
+
+Cosign verification is applied to both own endorsements and dependency endorsements. For dependencies, OIDs are validated against the dependency's `BuildInfo` from its attestation report.
+
+Verified cosign results are cached alongside endorsement documents in the shared `fetcherCache`. On cache hit for both, zero network calls happen. On cache miss for either, both are re-fetched together.
 
 ## Testing
 

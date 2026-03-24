@@ -19,6 +19,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
+	"github.com/sigstore/sigstore-go/pkg/verify"
 
 	"github.com/eternisai/attestation-server/pkg/dnssec"
 	"github.com/eternisai/attestation-server/pkg/nitro"
@@ -29,22 +30,23 @@ import (
 
 // Server wraps a Fiber application with its dependencies.
 type Server struct {
-	ctx             context.Context
-	app             *fiber.App
-	cfg             *Config
-	logger          *slog.Logger
-	buildInfo       *BuildInfo
-	endorsements    []*url.URL
-	certs           tlsCertificates
-	nitroNSM        *nitro.NSM
-	nitroTPM        *nitro.TPM
-	sevSNP          *sevsnp.Device
-	tdxDev          *tdx.Device
-	secureBoot      *bool
-	instanceID      string // deterministic ID for dependency cycle detection via X-Attestation-Path
-	selfAttestation *parsedSelfAttestation
-	endCache        *endorsementCache
-	dnssecResolver  *dnssec.Resolver
+	ctx              context.Context
+	app              *fiber.App
+	cfg              *Config
+	logger           *slog.Logger
+	buildInfo        *BuildInfo
+	endorsements     []*url.URL
+	certs            tlsCertificates
+	nitroNSM         *nitro.NSM
+	nitroTPM         *nitro.TPM
+	sevSNP           *sevsnp.Device
+	tdxDev           *tdx.Device
+	secureBoot       *bool
+	instanceID       string // deterministic ID for dependency cycle detection via X-Attestation-Path
+	selfAttestation  *parsedSelfAttestation
+	httpCache        *fetcherCache
+	sigstoreVerifier *verify.Verifier
+	dnssecResolver   *dnssec.Resolver
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -77,6 +79,9 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	endorsements, err := loadEndorsements(cfg.EndorsementsPath)
 	if err != nil {
 		return nil, fmt.Errorf("loading endorsements: %w", err)
+	}
+	if cfg.CosignVerify && len(endorsements) == 0 {
+		return nil, fmt.Errorf("endorsements.cosign.verify is enabled but no endorsement URLs are configured")
 	}
 	s.endorsements = endorsements
 	endorsementStrs := make([]string, len(endorsements))
@@ -224,11 +229,20 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	if len(s.endorsements) > 0 {
-		cache, err := newEndorsementCache(cfg.EndorsementCacheSize)
+		cache, err := newFetcherCache(cfg.HTTPCacheSize)
 		if err != nil {
 			return nil, err
 		}
-		s.endCache = cache
+		s.httpCache = cache
+
+		if cfg.CosignVerify {
+			v, err := initSigstoreVerifier(logger)
+			if err != nil {
+				return nil, fmt.Errorf("cosign initialization: %w", err)
+			}
+			s.sigstoreVerifier = v
+		}
+
 		if err := s.validateOwnEndorsements(context.Background()); err != nil {
 			return nil, fmt.Errorf("endorsement validation: %w", err)
 		}

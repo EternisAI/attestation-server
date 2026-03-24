@@ -485,11 +485,11 @@ func TestFetchEndorsementDocuments_Identical(t *testing.T) {
 	u2, _ := url.Parse(srv2.URL + "/endorsement.json")
 
 	// Use the test servers' TLS clients
-	origClient := s.endorsementHTTPClient()
+	origClient := s.fetchHTTPClient()
 	_ = origClient // we need to use TLS test servers' transport
 
 	// Create a client that trusts the test servers
-	doc, _, ttl, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u1, u2}, srv1.Client())
+	doc, _, _, ttl, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u1, u2}, srv1.Client())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestFetchEndorsementDocuments_Mismatch(t *testing.T) {
 	u1, _ := url.Parse(srv1.URL + "/endorsement.json")
 	u2, _ := url.Parse(srv2.URL + "/endorsement.json")
 
-	_, _, _, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u1, u2}, srv1.Client())
+	_, _, _, _, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u1, u2}, srv1.Client())
 	if err == nil {
 		t.Fatal("expected error for mismatched documents")
 	}
@@ -532,7 +532,7 @@ func TestFetchEndorsementDocuments_Mismatch(t *testing.T) {
 // --- Endorsement cache ---
 
 func TestEndorsementCache_SetGroupAndGet(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +557,7 @@ func TestEndorsementCache_SetGroupAndGet(t *testing.T) {
 }
 
 func TestEndorsementCache_Miss(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -719,7 +719,7 @@ func TestValidateOwnEndorsements_NoURLs(t *testing.T) {
 }
 
 func TestValidateOwnEndorsements_CacheHit(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -735,7 +735,7 @@ func TestValidateOwnEndorsements_CacheHit(t *testing.T) {
 			EndorsementClientTimeout: 5 * time.Second,
 		},
 		endorsements: []*url.URL{u},
-		endCache:     cache,
+		httpCache:    cache,
 		selfAttestation: &parsedSelfAttestation{
 			sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
 		},
@@ -747,7 +747,7 @@ func TestValidateOwnEndorsements_CacheHit(t *testing.T) {
 }
 
 func TestValidateOwnEndorsements_CacheHitMismatch(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,7 +763,7 @@ func TestValidateOwnEndorsements_CacheHitMismatch(t *testing.T) {
 			EndorsementClientTimeout: 5 * time.Second,
 		},
 		endorsements: []*url.URL{u},
-		endCache:     cache,
+		httpCache:    cache,
 		selfAttestation: &parsedSelfAttestation{
 			sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
 		},
@@ -781,7 +781,7 @@ func TestValidateOwnEndorsements_CacheHitMismatch(t *testing.T) {
 // --- resolveEndorsements ---
 
 func TestResolveEndorsements_CacheHit(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -790,12 +790,12 @@ func TestResolveEndorsements_CacheHit(t *testing.T) {
 	cache.setGroup([]string{"https://example.com/e.json"}, doc, 50, time.Minute)
 
 	s := &Server{
-		cfg:      &Config{EndorsementClientTimeout: 5 * time.Second},
-		endCache: cache,
+		cfg:       &Config{EndorsementClientTimeout: 5 * time.Second},
+		httpCache: cache,
 	}
 
 	u, _ := url.Parse("https://example.com/e.json")
-	got, err := s.resolveEndorsements(context.Background(), []*url.URL{u})
+	got, _, err := s.resolveEndorsements(context.Background(), []*url.URL{u})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -810,20 +810,20 @@ func TestResolveEndorsements_CacheMissFetches(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	s := &Server{
-		cfg:      &Config{EndorsementClientTimeout: 5 * time.Second},
-		endCache: cache,
+		cfg:       &Config{EndorsementClientTimeout: 5 * time.Second},
+		httpCache: cache,
 	}
 
 	u, _ := url.Parse(srv.URL + "/e.json")
 
 	// First call should fetch
-	doc, err := s.resolveEndorsementsWithClient(context.Background(), []*url.URL{u}, srv.Client())
+	doc, _, err := s.resolveEndorsementsWithClient(context.Background(), []*url.URL{u}, srv.Client())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -832,7 +832,7 @@ func TestResolveEndorsements_CacheMissFetches(t *testing.T) {
 	}
 
 	// Second call should hit cache (same pointer)
-	doc2, err := s.resolveEndorsements(context.Background(), []*url.URL{u})
+	doc2, _, err := s.resolveEndorsements(context.Background(), []*url.URL{u})
 	if err != nil {
 		t.Fatalf("unexpected error on cached call: %v", err)
 	}
@@ -895,7 +895,7 @@ func TestFetchEndorsementDocuments_RejectsHTTP(t *testing.T) {
 	}
 
 	u, _ := url.Parse("http://example.com/e.json")
-	_, _, _, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u}, nil)
+	_, _, _, _, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u}, nil)
 	if err == nil {
 		t.Fatal("expected error for http URL")
 	}
@@ -911,7 +911,7 @@ func TestFetchEndorsementDocuments_RejectsMixedSchemes(t *testing.T) {
 
 	u1, _ := url.Parse("https://example.com/e.json")
 	u2, _ := url.Parse("http://example.com/e.json")
-	_, _, _, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u1, u2}, nil)
+	_, _, _, _, err := s.fetchEndorsementDocumentsWithClient(context.Background(), []*url.URL{u1, u2}, nil)
 	if err == nil {
 		t.Fatal("expected error for mixed schemes")
 	}
@@ -940,7 +940,7 @@ func TestValidateDependencyEndorsements_NoEndorsementURLs(t *testing.T) {
 }
 
 func TestValidateDependencyEndorsements_CacheHit(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -959,8 +959,8 @@ func TestValidateDependencyEndorsements_CacheHit(t *testing.T) {
 	}
 
 	s := &Server{
-		cfg:      &Config{EndorsementClientTimeout: 5 * time.Second},
-		endCache: cache,
+		cfg:       &Config{EndorsementClientTimeout: 5 * time.Second},
+		httpCache: cache,
 	}
 	parsed := &parsedDependencyEvidence{
 		sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
@@ -972,7 +972,7 @@ func TestValidateDependencyEndorsements_CacheHit(t *testing.T) {
 }
 
 func TestValidateDependencyEndorsements_Mismatch(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -991,8 +991,8 @@ func TestValidateDependencyEndorsements_Mismatch(t *testing.T) {
 	}
 
 	s := &Server{
-		cfg:      &Config{EndorsementClientTimeout: 5 * time.Second},
-		endCache: cache,
+		cfg:       &Config{EndorsementClientTimeout: 5 * time.Second},
+		httpCache: cache,
 	}
 	parsed := &parsedDependencyEvidence{
 		sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
@@ -1008,7 +1008,7 @@ func TestValidateDependencyEndorsements_Mismatch(t *testing.T) {
 }
 
 func TestValidateDependencyEndorsements_EvidenceButNoEndorsement(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1027,8 +1027,8 @@ func TestValidateDependencyEndorsements_EvidenceButNoEndorsement(t *testing.T) {
 	}
 
 	s := &Server{
-		cfg:      &Config{EndorsementClientTimeout: 5 * time.Second},
-		endCache: cache,
+		cfg:       &Config{EndorsementClientTimeout: 5 * time.Second},
+		httpCache: cache,
 	}
 	parsed := &parsedDependencyEvidence{
 		sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
@@ -1044,7 +1044,7 @@ func TestValidateDependencyEndorsements_EvidenceButNoEndorsement(t *testing.T) {
 }
 
 func TestValidateDependencyEndorsements_TPMData(t *testing.T) {
-	cache, err := newEndorsementCache(100 << 20)
+	cache, err := newFetcherCache(100 << 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1070,8 +1070,8 @@ func TestValidateDependencyEndorsements_TPMData(t *testing.T) {
 	}
 
 	s := &Server{
-		cfg:      &Config{EndorsementClientTimeout: 5 * time.Second},
-		endCache: cache,
+		cfg:       &Config{EndorsementClientTimeout: 5 * time.Second},
+		httpCache: cache,
 	}
 	parsed := &parsedDependencyEvidence{}
 

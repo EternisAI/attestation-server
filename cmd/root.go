@@ -65,7 +65,11 @@ func initConfig() {
 	viper.SetDefault("dependencies.endpoints", []string{})
 	viper.SetDefault("endorsements.dnssec", false)
 	viper.SetDefault("endorsements.client.timeout", "10s")
-	viper.SetDefault("endorsements.cache.size", "100MiB")
+	viper.SetDefault("http.cache.size", "100MiB")
+	viper.SetDefault("endorsements.cosign.verify", true)
+	viper.SetDefault("endorsements.cosign.url_suffix", ".sig")
+	viper.SetDefault("endorsements.cosign.build_signer.uri", "")
+	viper.SetDefault("endorsements.cosign.build_signer.uri_regex", "")
 
 	// Explicit environment variable bindings (avoids AutomaticEnv underscore ambiguity)
 	_ = viper.BindEnv("log.format", "ATTESTATION_SERVER_LOG_FORMAT")
@@ -91,7 +95,11 @@ func initConfig() {
 	_ = viper.BindEnv("dependencies.endpoints", "ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS")
 	_ = viper.BindEnv("endorsements.dnssec", "ATTESTATION_SERVER_ENDORSEMENTS_DNSSEC")
 	_ = viper.BindEnv("endorsements.client.timeout", "ATTESTATION_SERVER_ENDORSEMENTS_CLIENT_TIMEOUT")
-	_ = viper.BindEnv("endorsements.cache.size", "ATTESTATION_SERVER_ENDORSEMENTS_CACHE_SIZE")
+	_ = viper.BindEnv("http.cache.size", "ATTESTATION_SERVER_HTTP_CACHE_SIZE")
+	_ = viper.BindEnv("endorsements.cosign.verify", "ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_VERIFY")
+	_ = viper.BindEnv("endorsements.cosign.url_suffix", "ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_URL_SUFFIX")
+	_ = viper.BindEnv("endorsements.cosign.build_signer.uri", "ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI")
+	_ = viper.BindEnv("endorsements.cosign.build_signer.uri_regex", "ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI_REGEX")
 
 	// Config file resolution: flag > env var > fallback paths
 	explicit := true
