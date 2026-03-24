@@ -21,7 +21,6 @@ import (
 	"github.com/goccy/go-json"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
 	pb "github.com/google/go-tdx-guest/proto/tdx"
-	"github.com/miekg/dns"
 	_ "golang.org/x/crypto/x509roots/fallback"
 	"golang.org/x/sync/errgroup"
 
@@ -80,8 +79,9 @@ func (ec *endorsementCache) setGroup(urls []string, doc *EndorsementDocument, ra
 
 // endorsementHTTPClient builds an HTTPS client for fetching endorsement
 // documents from public URLs. Uses system/Mozilla root CAs (via the
-// x509roots/fallback blank import). If DNSSEC enforcement is enabled, a
-// custom resolver that validates DNSSEC is wired into the transport.
+// x509roots/fallback blank import). If a DNSSEC resolver is configured,
+// it is wired into the transport so DNS queries go through the same
+// upstream servers used for DNSSEC validation.
 func (s *Server) endorsementHTTPClient() *http.Client {
 	roots, err := x509.SystemCertPool()
 	if err != nil {
@@ -91,8 +91,8 @@ func (s *Server) endorsementHTTPClient() *http.Client {
 	dialer := &net.Dialer{
 		Timeout: endorsementDialTimeout,
 	}
-	if s.cfg.EndorsementDNSSEC {
-		dialer.Resolver = dnssecResolver()
+	if s.dnssecResolver != nil {
+		dialer.Resolver = s.dnssecResolver.NetResolver()
 	}
 
 	return &http.Client{
@@ -105,55 +105,6 @@ func (s *Server) endorsementHTTPClient() *http.Client {
 			DisableKeepAlives:     true,
 		},
 	}
-}
-
-// dnssecResolver returns a net.Resolver that validates DNSSEC by querying a
-// well-known validating resolver and checking the AD (Authenticated Data)
-// flag. If the AD flag is not set, DNS resolution fails — this enforces
-// strict DNSSEC: domains must have DNSSEC configured.
-func dnssecResolver() *net.Resolver {
-	return &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			// Use Cloudflare's DNSSEC-validating resolver
-			d := net.Dialer{Timeout: 5 * time.Second}
-			return d.DialContext(ctx, "udp", "1.1.1.1:53")
-		},
-	}
-}
-
-// dnssecLookup performs a DNS A/AAAA lookup with DNSSEC validation for the
-// given host. It queries a well-known validating resolver with the DO bit
-// set and checks the AD flag. Returns an error if the AD flag is not set.
-func dnssecLookup(ctx context.Context, host string) error {
-	if !strings.Contains(host, ".") {
-		return nil // skip localhost / bare names
-	}
-	// Strip port if present
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	if net.ParseIP(host) != nil {
-		return nil // IP addresses don't have DNSSEC
-	}
-
-	c := &dns.Client{Timeout: 5 * time.Second}
-	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn(host), dns.TypeA)
-	m.SetEdns0(4096, true) // DO bit
-	m.RecursionDesired = true
-
-	r, _, err := c.ExchangeContext(ctx, m, "1.1.1.1:53")
-	if err != nil {
-		return classifyNetError(fmt.Errorf("DNSSEC lookup for %s: %w", host, err))
-	}
-	if r.Rcode == dns.RcodeServerFailure {
-		return fmt.Errorf("DNSSEC validation failed for %s (SERVFAIL)", host)
-	}
-	if !r.AuthenticatedData {
-		return fmt.Errorf("DNSSEC not available for %s (AD flag not set)", host)
-	}
-	return nil
 }
 
 // parseCacheTTL extracts a TTL from HTTP response headers. It checks
@@ -231,7 +182,7 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 	defer cancel()
 
 	// DNSSEC pre-validation for unique hosts
-	if s.cfg.EndorsementDNSSEC {
+	if s.dnssecResolver != nil {
 		seen := make(map[string]bool)
 		for _, u := range urls {
 			host := u.Hostname()
@@ -239,7 +190,7 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 				continue
 			}
 			seen[host] = true
-			if err := dnssecLookup(ctx, host); err != nil {
+			if err := s.dnssecResolver.Validate(ctx, host); err != nil {
 				return nil, 0, 0, err
 			}
 		}

@@ -21,6 +21,7 @@ internal/logging.go        # NewLogger() (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS certificate/CA loading, verification, and hot-reload (package app)
 internal/types.go          # BuildInfo, AttestationReport, AttestationReportData, and other shared structs (package app)
+pkg/dnssec/dnssec.go       # DNSSEC chain-of-trust validation: walks delegation chain from zone to root, verifies RRSIG signatures, embedded IANA root KSK trust anchors (package dnssec)
 pkg/hexbytes/hexbytes.go   # Shared HexBytes type: []byte that JSON-serializes as hex string (package hexbytes)
 pkg/nitro/nitro.go         # Shared Nitro attestation: COSE_Sign1 verification, cert chain validation, embedded AWS Nitro root CA (package nitro)
 pkg/nitro/nsm.go           # NSM device access and attestation via /dev/nsm (package nitro)
@@ -250,7 +251,7 @@ After cryptographically verifying a dependency's attestation report, the server 
 
 ### Endorsement HTTP client
 
-Uses system/Mozilla root CAs (via `golang.org/x/crypto/x509roots/fallback` blank import). Hardened with per-phase timeouts (dial 3s, TLS 5s, headers 5s), 1 MiB body limit, disabled keep-alives. When `endorsements.dnssec` is enabled, a DNSSEC-validating resolver (via `github.com/miekg/dns`) is wired into the transport, requiring the AD flag on DNS responses (strict mode).
+Uses system/Mozilla root CAs (via `golang.org/x/crypto/x509roots/fallback` blank import). Hardened with per-phase timeouts (dial 3s, TLS 5s, headers 5s), 1 MiB body limit, disabled keep-alives. When `endorsements.dnssec` is enabled, the `pkg/dnssec` resolver performs cryptographic DNSSEC chain-of-trust validation for endorsement URL hosts before fetching. The resolver reads upstream nameservers from `/etc/resolv.conf` (falling back to `127.0.0.53:53` then `127.0.0.1:53`), sets the CD bit to get raw RRSIG records from any resolver, and validates the full delegation chain from zone to root against embedded IANA root KSK trust anchors (KSK-2017 tag 20326, KSK-2024 tag 38696). It does not rely on the upstream resolver's AD flag.
 
 ### Endorsement cache
 

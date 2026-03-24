@@ -20,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
 
+	"github.com/eternisai/attestation-server/pkg/dnssec"
 	"github.com/eternisai/attestation-server/pkg/nitro"
 	"github.com/eternisai/attestation-server/pkg/sevsnp"
 	"github.com/eternisai/attestation-server/pkg/tdx"
@@ -43,6 +44,7 @@ type Server struct {
 	instanceID      string // deterministic ID for dependency cycle detection via X-Attestation-Path
 	selfAttestation *parsedSelfAttestation
 	endCache        *endorsementCache
+	dnssecResolver  *dnssec.Resolver
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -88,6 +90,15 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	}
 	if err := s.loadCertificates(); err != nil {
 		return nil, err
+	}
+
+	if cfg.EndorsementDNSSEC {
+		dr, drErr := dnssec.New(5 * time.Second)
+		if drErr != nil {
+			return nil, fmt.Errorf("creating DNSSEC resolver: %w", drErr)
+		}
+		s.dnssecResolver = dr
+		logger.Info("initialized dnssec resolver", "servers", strings.Join(dr.Servers(), ","))
 	}
 
 	s.instanceID = s.deriveServiceIdentity()
