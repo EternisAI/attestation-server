@@ -19,7 +19,8 @@
             type == "directory"
             || baseName == "go.mod"
             || baseName == "go.sum"
-            || pkgs.lib.hasSuffix ".go" baseName;
+            || pkgs.lib.hasSuffix ".go" baseName
+            || pkgs.lib.hasSuffix ".json" baseName;
         };
       in
       {
@@ -29,17 +30,27 @@
             version = self.shortRev or self.dirtyShortRev or "dev";
 
             inherit src;
-            vendorHash = "sha256-sTgIRlivo+8b549oc2ysmOPk1c88Sy2sRbT65pWSzPQ=";
+            vendorHash = "sha256-1BXfSgutuFxtBAByq+PO5K0gKpVNy4etCmcxe7t5Goo=";
 
             subPackages = [ "." ];
 
             env.CGO_ENABLED = 0;
             ldflags = [ "-s" "-w" ];
 
-            # Tests require TEE hardware devices and network access
-            doCheck = false;
+            # Live DNSSEC tests are gated behind DNSSEC_LIVE_TEST env var
+            # and skip themselves in the sandbox; all other tests use fixtures
+            doCheck = true;
           };
           default = attestation-server;
+
+          docker-image = pkgs.dockerTools.streamLayeredImage {
+            name = "ghcr.io/eternisai/attestation-server";
+            tag = "latest";
+            contents = [ attestation-server pkgs.cacert ];
+            config = {
+              Entrypoint = [ "${attestation-server}/bin/attestation-server" ];
+            };
+          };
         };
       }
     );

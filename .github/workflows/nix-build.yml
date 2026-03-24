@@ -1,0 +1,23 @@
+name: Nix Build
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@9a59e15a74545c99a626ba594edcd0d02189e670 # main at 2026-03-20T13:57:34Z
+
+      - name: Build
+        run: nix build .#docker-image

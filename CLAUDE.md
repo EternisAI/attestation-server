@@ -32,8 +32,13 @@ pkg/sevsnp/sevsnp.go       # SEV-SNP device access, attestation via go-sev-guest
 pkg/tdx/tdx.go             # Intel TDX device access, attestation via go-tdx-guest, quote verification, report parsing (package tdx)
 pkg/tpm/tpm.go             # Generic TPM PCR reading via google/go-tpm over /dev/tpmrm0 (package tpm)
 config/config.toml         # default configuration file
-flake.nix                  # Nix flake: reproducible hermetic build of the server binary
+flake.nix                  # Nix flake: reproducible hermetic build of the server binary and Docker image
 flake.lock                 # pinned Nix input revisions (nixpkgs, flake-utils)
+.github/workflows/ci.yml  # CI: go fmt, go test (with DNSSEC live tests), go vet, go build on pushes to non-main branches
+.github/workflows/nix-build.yml # Nix build: nix build .#docker-image (with offline tests) on PRs to main
+.github/workflows/release.yml # Release: Nix build → Release Please → Docker push to GHCR + cosign
+release-please-config.json # Release Please configuration (changelog sections, versioning)
+.release-please-manifest.json # Release Please version manifest
 ```
 
 ## Configuration
@@ -409,7 +414,11 @@ Fixture files:
 
 ## Nix build
 
-The project provides a Nix flake for reproducible, hermetic builds. Inputs are pinned to exact commit hashes in `flake.nix` and locked in `flake.lock`. The flake builds a statically linked binary (`CGO_ENABLED=0`, stripped with `-s -w`). Tests are skipped (they require TEE hardware and network access). The source filter includes only `*.go`, `go.mod`, and `go.sum` — changes to docs, test fixtures, or config do not trigger a rebuild.
+The project provides a Nix flake for reproducible, hermetic builds. Inputs are pinned to exact commit hashes in `flake.nix` and locked in `flake.lock`. The flake builds a statically linked binary (`CGO_ENABLED=0`, stripped with `-s -w`). Tests run during the build (live DNSSEC tests skip themselves in the sandbox since `DNSSEC_LIVE_TEST` is unset; all other tests use fixtures). The source filter includes `*.go`, `*.json` (test fixtures), `go.mod`, and `go.sum` — changes to docs or config do not trigger a rebuild.
+
+The flake exposes two package targets:
+- `default` / `attestation-server` — the statically linked binary
+- `docker-image` — a minimal OCI image (`streamLayeredImage`) containing the binary and CA certificates, used by the release workflow and downstream Nitro TEE EIF builds
 
 The flake is designed to be referenced as a GitHub source input from downstream TEE image repositories:
 
@@ -420,6 +429,18 @@ inputs.attestation-server.url = "github:eternisai/attestation-server";
 ```
 
 When `go.mod` or `go.sum` change, the `vendorHash` in `flake.nix` must be updated. Set it to `lib.fakeHash`, build, and use the hash from the error message.
+
+## CI/CD
+
+- **CI** (`.github/workflows/ci.yml`) — runs on pushes to non-main branches: `go fmt` check, `go test` with `DNSSEC_LIVE_TEST=1`, `go vet`, `go build`.
+- **Nix Build** (`.github/workflows/nix-build.yml`) — runs on PRs targeting main: `nix build .#docker-image` (runs offline test suite via `doCheck`). Catches flake breakage before merge.
+- Branch protection on main should require both `Test` and `Build` status checks to pass.
+- **Release** (`.github/workflows/release.yml`) — runs on push to main, three sequential jobs:
+  1. **Build** — `nix build .#docker-image` (runs tests via `doCheck`), uploads image tarball as artifact
+  2. **Release** — Release Please creates/updates a release PR; on merge, creates a GitHub Release + tag
+  3. **Docker** — loads the pre-built image, pushes to `ghcr.io/eternisai/attestation-server:<tag>`, cosigns with keyless Sigstore (Fulcio + Rekor via GitHub OIDC)
+
+Release Please is configured via `release-please-config.json` and `.release-please-manifest.json`. It parses Conventional Commit messages to determine version bumps and generate changelogs.
 
 ## Development
 
