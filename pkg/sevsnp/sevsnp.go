@@ -180,10 +180,21 @@ func SplitEvidence(blob []byte) (rawReport, certTable []byte, err error) {
 	return blob[:abi.ReportSize], blob[abi.ReportSize:], nil
 }
 
+// RevocationChecker is an optional callback for checking certificate
+// revocation status. When provided, it is called after the endorsement key's
+// certificate chain is verified but before the report is accepted. The
+// function receives the endorsement key certificate (VCEK or VLEK) and should
+// return an error if the certificate is revoked. Pass nil to skip revocation
+// checking (the default for standalone callers).
+type RevocationChecker func(cert *x509.Certificate, now time.Time) error
+
 // VerifyEvidence parses the raw report and certificate table, verifies
 // the ECDSA-P384 signature against AMD's embedded trust roots (offline, no
-// CRL check), and validates that the report data field matches the expected
-// value.
+// CRL check unless a RevocationChecker is provided), and validates that the
+// report data field matches the expected value.
+//
+// An optional RevocationChecker can be passed to check the endorsement key
+// certificate against a CRL. Standalone callers may omit it.
 //
 // We perform verification manually instead of delegating to
 // verify.SnpAttestation because go-sev-guest (as of v0.14.1) has three
@@ -212,7 +223,7 @@ func SplitEvidence(blob []byte) (rawReport, certTable []byte, err error) {
 //     bytes differ from what the hardware actually signed, causing ECDSA
 //     verification to fail. We verify the signature directly against the
 //     original raw report bytes instead.
-func VerifyEvidence(blob []byte, expectedReportData [64]byte, now time.Time) (*spb.Report, error) {
+func VerifyEvidence(blob []byte, expectedReportData [64]byte, now time.Time, checkers ...RevocationChecker) (*spb.Report, error) {
 	rawReport, certTable, err := SplitEvidence(blob)
 	if err != nil {
 		return nil, err
@@ -290,6 +301,13 @@ func VerifyEvidence(blob []byte, expectedReportData [64]byte, now time.Time) (*s
 	}
 	if verifyErr != nil {
 		return nil, fmt.Errorf("sev-snp certificate chain verification failed: %w", verifyErr)
+	}
+
+	// Optional revocation check on the endorsement key certificate.
+	if len(checkers) > 0 && checkers[0] != nil {
+		if err := checkers[0](endorsementKey, now); err != nil {
+			return nil, fmt.Errorf("sev-snp endorsement key revocation check: %w", err)
+		}
 	}
 
 	// Verify the report signature directly against the original raw

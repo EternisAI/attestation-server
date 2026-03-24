@@ -234,7 +234,10 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
-	parsed, err := verifyDependencyReport(&report, nonceHex, privFP, time.Now())
+	parsed, err := verifyDependencyReport(&report, nonceHex, privFP, time.Now(), revocationOpts{
+		sevsnpChecker:       s.sevsnpRevocationChecker(),
+		tdxCheckRevocations: s.cfg.RevocationEnabled,
+	})
 	if err != nil {
 		if isE2EError(err) {
 			s.logger.Error("dependency end-to-end encryption verification failed",
@@ -266,10 +269,17 @@ func isE2EError(err error) bool {
 	return errors.As(err, &e)
 }
 
+// revocationOpts holds optional revocation checking callbacks for dependency
+// verification. Zero value means no revocation checking.
+type revocationOpts struct {
+	sevsnpChecker       sevsnp.RevocationChecker
+	tdxCheckRevocations bool
+}
+
 // verifyDependencyReportOnly is a convenience wrapper around
 // verifyDependencyReport that discards the parsed evidence results.
-func verifyDependencyReportOnly(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time) error {
-	_, err := verifyDependencyReport(report, expectedNonce, clientCertFP, now)
+func verifyDependencyReportOnly(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time, revOpts ...revocationOpts) error {
+	_, err := verifyDependencyReport(report, expectedNonce, clientCertFP, now, revOpts...)
 	return err
 }
 
@@ -283,7 +293,7 @@ func verifyDependencyReportOnly(report *AttestationReport, expectedNonce, client
 // clientCertFP is the SHA-256 hex fingerprint of the private certificate
 // we presented as the TLS client cert when connecting to the dependency.
 // The dependency must include this in data.tls.client.certificate.
-func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time) (*parsedDependencyEvidence, error) {
+func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time, revOpts ...revocationOpts) (*parsedDependencyEvidence, error) {
 	if len(report.Evidence) == 0 {
 		return nil, fmt.Errorf("no evidence in report")
 	}
@@ -341,13 +351,18 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 			} else {
 				snpReportData = digest
 			}
-			report, err := sevsnp.VerifyEvidence(ev.Blob, snpReportData, now)
+			var snpChecker sevsnp.RevocationChecker
+			if len(revOpts) > 0 {
+				snpChecker = revOpts[0].sevsnpChecker
+			}
+			report, err := sevsnp.VerifyEvidence(ev.Blob, snpReportData, now, snpChecker)
 			if err != nil {
 				return nil, fmt.Errorf("sevsnp verification: %w", err)
 			}
 			parsed.sevSNPReport = report
 		case "tdx":
-			quote, err := tdx.VerifyEvidence(ev.Blob, digest, now)
+			tdxRevoke := len(revOpts) > 0 && revOpts[0].tdxCheckRevocations
+			quote, err := tdx.VerifyEvidence(ev.Blob, digest, now, tdxRevoke)
 			if err != nil {
 				return nil, fmt.Errorf("tdx verification: %w", err)
 			}

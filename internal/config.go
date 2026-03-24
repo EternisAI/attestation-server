@@ -45,6 +45,8 @@ type Config struct {
 	EndorsementAllowedDomains []string
 	EndorsementClientTimeout  time.Duration
 	HTTPCacheSize             int64
+	RevocationEnabled         bool
+	RevocationRefreshInterval time.Duration
 	RateLimitEnabled          bool
 	RateLimitRPS              float64
 	RateLimitBurst            int
@@ -118,6 +120,11 @@ func LoadConfig() (*Config, error) {
 		httpCacheSize = 100 << 20
 	}
 
+	revocationRefreshInterval, err := time.ParseDuration(viper.GetString("revocation.refresh_interval"))
+	if err != nil {
+		revocationRefreshInterval = 12 * time.Hour
+	}
+
 	rateLimitStallTimeout, err := time.ParseDuration(viper.GetString("ratelimit.stall_timeout"))
 	if err != nil {
 		rateLimitStallTimeout = 10 * time.Second
@@ -150,6 +157,8 @@ func LoadConfig() (*Config, error) {
 		ReportEnvVars:             envVars,
 		SecureBootEnforce:         viper.GetBool("secure_boot.enforce"),
 		TPM:                       tpmCfg,
+		RevocationEnabled:         viper.GetBool("revocation.enabled"),
+		RevocationRefreshInterval: revocationRefreshInterval,
 		RateLimitEnabled:          viper.GetBool("ratelimit.enabled"),
 		RateLimitRPS:              viper.GetFloat64("ratelimit.requests_per_second"),
 		RateLimitBurst:            viper.GetInt("ratelimit.burst"),

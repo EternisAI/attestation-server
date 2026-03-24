@@ -47,6 +47,7 @@ type Server struct {
 	httpCache        *fetcherCache
 	sigstoreVerifier *verify.Verifier
 	rateLimiters     *rateLimiterMap
+	crlCache         *crlCache
 	dnssecResolver   *dnssec.Resolver
 }
 
@@ -269,6 +270,16 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		logger.Info("validated endorsements against self-attestation evidence")
 	}
 
+	if cfg.RevocationEnabled {
+		crlURLs := crlURLsForEvidence(cfg)
+		if len(crlURLs) > 0 {
+			s.crlCache = newCRLCache(logger)
+			logger.Info("certificate revocation checking enabled", "crl_urls", len(crlURLs), "refresh_interval", cfg.RevocationRefreshInterval.String())
+		}
+	} else {
+		logger.Warn("certificate revocation checking is disabled, revoked TEE endorsement keys will be accepted")
+	}
+
 	if len(cfg.DependencyEndpoints) > 0 {
 		depStrs := make([]string, len(cfg.DependencyEndpoints))
 		for i, u := range cfg.DependencyEndpoints {
@@ -362,6 +373,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.rateLimiters != nil {
 		go s.runRateLimitCleanup(ctx)
+	}
+	if s.crlCache != nil {
+		go s.runCRLRefresh(ctx)
 	}
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.BindHost, s.cfg.BindPort)

@@ -207,9 +207,14 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 
 	if s.cfg.ReportEvidence.TDX {
 		start := time.Now()
-		blob, quote, err := s.tdxDev.Attest(digest)
+		blob, err := s.tdxDev.GetEvidence(digest)
 		if err != nil {
 			s.logger.Error("tdx attestation failed", "error", err, "request_id", requestID)
+			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
+		}
+		quote, err := tdx.VerifyEvidence(blob, digest, time.Now(), s.cfg.RevocationEnabled)
+		if err != nil {
+			s.logger.Error("tdx verification failed", "error", err, "request_id", requestID)
 			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 		}
 		s.logger.Debug("tdx attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
@@ -249,9 +254,14 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		} else {
 			snpReportData = digest
 		}
-		blob, snpReport, err := s.sevSNP.Attest(snpReportData, s.cfg.ReportEvidence.SEVSNPVMPL)
+		blob, err := s.sevSNP.GetEvidence(snpReportData, s.cfg.ReportEvidence.SEVSNPVMPL)
 		if err != nil {
 			s.logger.Error("sevsnp attestation failed", "error", err, "request_id", requestID)
+			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
+		}
+		snpReport, err := sevsnp.VerifyEvidence(blob, snpReportData, time.Now(), s.sevsnpRevocationChecker())
+		if err != nil {
+			s.logger.Error("sevsnp verification failed", "error", err, "request_id", requestID)
 			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 		}
 		s.logger.Debug("sevsnp attestation complete", "duration_ms", time.Since(start).Milliseconds(), "request_id", requestID)
@@ -316,6 +326,15 @@ func extractXFCCHash(xfcc string) string {
 		return ""
 	}
 	return ""
+}
+
+// sevsnpRevocationChecker returns a RevocationChecker for SEV-SNP evidence
+// if CRL checking is enabled, or nil otherwise.
+func (s *Server) sevsnpRevocationChecker() sevsnp.RevocationChecker {
+	if s.crlCache == nil {
+		return nil
+	}
+	return s.crlCache.CheckRevocation
 }
 
 func isValidHexFingerprint(s string) bool {

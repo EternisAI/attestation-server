@@ -107,10 +107,14 @@ func (t *Device) GetEvidence(reportData [64]byte) ([]byte, error) {
 }
 
 // VerifyEvidence parses the raw quote, verifies the ECDSA-P256 signature and
-// PCK certificate chain against the Intel SGX Root CA (offline, no collateral
-// fetching or CRL check), and validates that the report data field matches the
-// expected value.
-func VerifyEvidence(rawQuote []byte, expectedReportData [64]byte, now time.Time) (*pb.QuoteV4, error) {
+// PCK certificate chain against the Intel SGX Root CA, and validates that the
+// report data field matches the expected value.
+//
+// When checkRevocations is true, collateral is fetched from the Intel PCS and
+// the PCK certificate chain is checked against CRLs. This adds network
+// latency to each verification call. When false (the default for standalone
+// callers), verification is offline with no collateral fetching.
+func VerifyEvidence(rawQuote []byte, expectedReportData [64]byte, now time.Time, checkRevocations ...bool) (*pb.QuoteV4, error) {
 	parsed, err := abi.QuoteToProto(rawQuote)
 	if err != nil {
 		return nil, fmt.Errorf("parsing tdx quote: %w", err)
@@ -124,9 +128,11 @@ func VerifyEvidence(rawQuote []byte, expectedReportData [64]byte, now time.Time)
 	if now.IsZero() {
 		now = time.Now()
 	}
+
+	revoke := len(checkRevocations) > 0 && checkRevocations[0]
 	opts := &verify.Options{
-		CheckRevocations: false,
-		GetCollateral:    false,
+		CheckRevocations: revoke,
+		GetCollateral:    revoke,
 		TrustedRoots:     intelSGXRootPool,
 		Now:              now,
 	}

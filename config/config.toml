@@ -26,6 +26,10 @@ algorithm = "sha384"  # sha1, sha256, sha384, sha512
 [report.user_data]
 env = []  # optional; environment variable names to include
 
+[revocation]
+enabled          = true   # check TEE endorsement key CRLs; only fetches for enabled evidence types
+refresh_interval = "12h"  # how often to re-fetch CRLs in the background
+
 [ratelimit]
 enabled             = false  # rate-limit edge requests (no client cert / XFCC)
 requests_per_second = 1      # per-IP rate

@@ -83,6 +83,10 @@ requests_per_second = 1
 burst               = 1
 stall_timeout       = "10s"
 
+[revocation]
+enabled          = true
+refresh_interval = "12h"
+
 [secure_boot]
 enforce = false
 
@@ -153,6 +157,8 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_TDX` | `report.evidence.tdx` | `false` | Enable Intel TDX evidence (exclusive: cannot combine with others) |
 | `ATTESTATION_SERVER_TPM_ENABLED` | `tpm.enabled` | `false` | Enable generic TPM PCR reading via /dev/tpmrm0; auto-disabled if NitroNSM or NitroTPM evidence is enabled. **Note:** generic TPM PCR values are unattested (`TPM2_PCR_Read`) — they lack a hardware-signed quote. Integrity relies on the TEE's memory encryption protecting the OS. NitroNSM and NitroTPM PCRs are hardware-attested (embedded in the signed attestation document). A future revision may use `TPM2_Quote` for hardware-attested PCR values |
 | `ATTESTATION_SERVER_TPM_ALGORITHM` | `tpm.algorithm` | `sha384` | Hash algorithm for TPM PCR values: `sha1`/`sha256`/`sha384`/`sha512` (case-insensitive) |
+| `ATTESTATION_SERVER_REVOCATION_ENABLED` | `revocation.enabled` | `true` | Check TEE endorsement key CRLs; only fetches for enabled evidence types. SEV-SNP CRLs are fetched from AMD KDS in the background; TDX uses go-tdx-guest's built-in Intel PCS collateral fetching |
+| `ATTESTATION_SERVER_REVOCATION_REFRESH_INTERVAL` | `revocation.refresh_interval` | `12h` | How often to re-fetch CRLs in the background (SEV-SNP only; TDX checks are per-request via the library) |
 | `ATTESTATION_SERVER_RATELIMIT_ENABLED` | `ratelimit.enabled` | `false` | Rate-limit edge requests (those without client certificate / XFCC header) |
 | `ATTESTATION_SERVER_RATELIMIT_REQUESTS_PER_SECOND` | `ratelimit.requests_per_second` | `1` | Per-IP request rate for edge traffic |
 | `ATTESTATION_SERVER_RATELIMIT_BURST` | `ratelimit.burst` | `1` | Burst allowance per IP |
