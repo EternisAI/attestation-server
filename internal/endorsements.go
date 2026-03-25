@@ -204,17 +204,17 @@ func (s *Server) validateOwnEndorsements(ctx context.Context) error {
 		}
 	}
 
-	return validateEndorsementsAgainstEvidence(doc, s.cfg, s.selfAttestation)
+	return validateEndorsementsAgainstEvidence(*doc, s.cfg, s.selfAttestation)
 }
 
 // validateEndorsementsAgainstEvidence checks all configured evidence types
 // against the golden measurements in the endorsement document.
-func validateEndorsementsAgainstEvidence(doc *EndorsementDocument, cfg *Config, sa *parsedSelfAttestation) error {
+func validateEndorsementsAgainstEvidence(doc EndorsementDocument, cfg *Config, sa *parsedSelfAttestation) error {
 	if cfg.ReportEvidence.NitroNSM {
 		if doc.NitroNSM == nil {
 			return fmt.Errorf("nitronsm: evidence configured but no endorsement measurements")
 		}
-		if err := validateNitroNSMMeasurements(sa.nitroNSMDoc, doc.NitroNSM); err != nil {
+		if err := validateNitroNSMMeasurements(sa.nitroNSMDoc, *doc.NitroNSM); err != nil {
 			return fmt.Errorf("nitronsm: %w", err)
 		}
 	}
@@ -223,7 +223,7 @@ func validateEndorsementsAgainstEvidence(doc *EndorsementDocument, cfg *Config, 
 		if doc.NitroTPM == nil {
 			return fmt.Errorf("nitrotpm: evidence configured but no endorsement measurements")
 		}
-		if err := validateNitroTPMMeasurements(sa.nitroTPMDoc, doc.NitroTPM); err != nil {
+		if err := validateNitroTPMMeasurements(sa.nitroTPMDoc, *doc.NitroTPM); err != nil {
 			return fmt.Errorf("nitrotpm: %w", err)
 		}
 	}
@@ -250,7 +250,7 @@ func validateEndorsementsAgainstEvidence(doc *EndorsementDocument, cfg *Config, 
 		if doc.TPM == nil {
 			return fmt.Errorf("tpm: evidence configured but no endorsement measurements")
 		}
-		if err := validateTPMMeasurements(sa.tpmPCRs, doc.TPM); err != nil {
+		if err := validateTPMMeasurements(sa.tpmPCRs, *doc.TPM); err != nil {
 			return fmt.Errorf("tpm: %w", err)
 		}
 	}
@@ -286,10 +286,11 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 		urls = append(urls, u)
 	}
 
-	doc, cr, err := s.resolveEndorsements(ctx, urls)
+	edp, cr, err := s.resolveEndorsements(ctx, urls)
 	if err != nil {
 		return err
 	}
+	doc := *edp
 
 	if cr != nil {
 		if err := s.validateCosignOIDs(cr, reportData.BuildInfo); err != nil {
@@ -307,7 +308,7 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 			if parsed.nitroNSMDoc == nil {
 				return fmt.Errorf("nitronsm: no parsed evidence available for endorsement check")
 			}
-			if err := validateNitroNSMMeasurements(parsed.nitroNSMDoc, doc.NitroNSM); err != nil {
+			if err := validateNitroNSMMeasurements(parsed.nitroNSMDoc, *doc.NitroNSM); err != nil {
 				return fmt.Errorf("nitronsm: %w", err)
 			}
 		case "nitrotpm":
@@ -317,7 +318,7 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 			if parsed.nitroTPMDoc == nil {
 				return fmt.Errorf("nitrotpm: no parsed evidence available for endorsement check")
 			}
-			if err := validateNitroTPMMeasurements(parsed.nitroTPMDoc, doc.NitroTPM); err != nil {
+			if err := validateNitroTPMMeasurements(parsed.nitroTPMDoc, *doc.NitroTPM); err != nil {
 				return fmt.Errorf("nitrotpm: %w", err)
 			}
 		case "sevsnp":
@@ -348,7 +349,7 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 		if doc.TPM == nil {
 			return fmt.Errorf("tpm: dependency has TPM data but endorsement has no measurements")
 		}
-		if err := validateTPMMeasurements(reportData.TPMData.PCRs, doc.TPM); err != nil {
+		if err := validateTPMMeasurements(reportData.TPMData.PCRs, *doc.TPM); err != nil {
 			return fmt.Errorf("tpm: %w", err)
 		}
 	}
@@ -360,32 +361,27 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 
 // validateNitroNSMMeasurements compares Nitro NSM PCR values from a verified
 // attestation document against golden values from an endorsement.
-func validateNitroNSMMeasurements(doc *nitro.AttestationDocument, endorsement *PCREndorsement) error {
+func validateNitroNSMMeasurements(doc *nitro.AttestationDocument, endorsement PCRGoldenValues) error {
 	return comparePCRs(doc.PCRs, endorsement)
 }
 
 // validateNitroTPMMeasurements compares NitroTPM PCR values from a verified
 // attestation document against golden values from an endorsement.
-func validateNitroTPMMeasurements(doc *nitro.AttestationDocument, endorsement *PCREndorsement) error {
+func validateNitroTPMMeasurements(doc *nitro.AttestationDocument, endorsement PCRGoldenValues) error {
 	return comparePCRs(doc.NitroTPMPCRs, endorsement)
 }
 
 // comparePCRs compares actual PCR values (map[int][]byte) against golden
-// values from an endorsement. PCR hex values are validated at parse time
+// values from an endorsement. Values are validated at parse time
 // (UnmarshalJSON); this function only compares.
-func comparePCRs(actual map[int][]byte, endorsement *PCREndorsement) error {
-	for idx, expectedHex := range endorsement.Measurements.PCRs {
-		expected, err := hex.DecodeString(expectedHex)
-		if err != nil {
-			return fmt.Errorf("PCR%d: invalid hex in endorsement: %w", idx, err)
-		}
+func comparePCRs(actual map[int][]byte, endorsement PCRGoldenValues) error {
+	for idx, expected := range endorsement {
 		actualVal, ok := actual[idx]
 		if !ok {
 			return fmt.Errorf("PCR%d: present in endorsement but missing from evidence", idx)
 		}
 		if !bytes.Equal(actualVal, expected) {
-			return fmt.Errorf("PCR%d mismatch: expected %s, got %s", idx,
-				hex.EncodeToString(expected), hex.EncodeToString(actualVal))
+			return fmt.Errorf("PCR%d mismatch: expected %x, got %x", idx, expected, actualVal)
 		}
 	}
 	return nil
@@ -459,21 +455,16 @@ func getRTMR(body *pb.TDQuoteBody, idx int) []byte {
 }
 
 // validateTPMMeasurements compares generic TPM PCR values against golden
-// values from an endorsement. PCR hex values are validated at parse time
+// values from an endorsement. Values are validated at parse time
 // (UnmarshalJSON); this function only compares.
-func validateTPMMeasurements(pcrs map[int]hexbytes.Bytes, endorsement *PCREndorsement) error {
-	for idx, expectedHex := range endorsement.Measurements.PCRs {
-		expected, err := hex.DecodeString(expectedHex)
-		if err != nil {
-			return fmt.Errorf("PCR%d: invalid hex in endorsement: %w", idx, err)
-		}
+func validateTPMMeasurements(pcrs map[int]hexbytes.Bytes, endorsement PCRGoldenValues) error {
+	for idx, expected := range endorsement {
 		actualVal, ok := pcrs[idx]
 		if !ok {
 			return fmt.Errorf("PCR%d: present in endorsement but missing from evidence", idx)
 		}
-		if !bytes.Equal([]byte(actualVal), expected) {
-			return fmt.Errorf("PCR%d mismatch: expected %s, got %s", idx,
-				hex.EncodeToString(expected), hex.EncodeToString([]byte(actualVal)))
+		if !bytes.Equal(actualVal, expected) {
+			return fmt.Errorf("PCR%d mismatch: expected %x, got %x", idx, expected, actualVal)
 		}
 	}
 	return nil

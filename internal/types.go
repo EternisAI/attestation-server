@@ -129,69 +129,33 @@ type TLSCertificateData struct {
 // EndorsementDocument holds golden measurement values keyed by evidence type.
 // The JSON keys match the evidence kind strings used in attestation reports.
 type EndorsementDocument struct {
-	NitroNSM *PCREndorsement `json:"nitronsm,omitempty"`
-	NitroTPM *PCREndorsement `json:"nitrotpm,omitempty"`
-	SEVSNP   *string         `json:"sevsnp,omitempty"`
-	TDX      *TDXEndorsement `json:"tdx,omitempty"`
-	TPM      *PCREndorsement `json:"tpm,omitempty"`
+	NitroNSM *PCRGoldenValues `json:"nitronsm,omitempty"`
+	NitroTPM *PCRGoldenValues `json:"nitrotpm,omitempty"`
+	SEVSNP   *string          `json:"sevsnp,omitempty"`
+	TDX      *TDXEndorsement  `json:"tdx,omitempty"`
+	TPM      *PCRGoldenValues `json:"tpm,omitempty"`
 }
 
-// PCREndorsement wraps the "Measurements" object used by NitroNSM, NitroTPM,
-// and generic TPM endorsements.
-type PCREndorsement struct {
-	Measurements PCRGoldenValues `json:"Measurements"`
-}
+// PCRGoldenValues maps PCR register indices to golden measurement values.
+// The JSON representation uses dynamic keys in either "N" or "PCRN" format
+// (where N is the PCR register number, 0–24), with hex-encoded string values.
+// Values must be non-empty valid hex strings.
+type PCRGoldenValues map[int]hexbytes.Bytes
 
-// DigestBytes maps canonical hash algorithm names to their output size in bytes.
-var DigestBytes = map[string]int{
-	"SHA1":   20,
-	"SHA256": 32,
-	"SHA384": 48,
-	"SHA512": 64,
-}
-
-// PCRGoldenValues holds a hash algorithm identifier and a set of PCR index →
-// hex-encoded golden value pairs. The JSON representation uses dynamic keys
-// ("HashAlgorithm", "PCR0", "PCR1", …, "PCR24") which are handled by a
-// custom UnmarshalJSON.
-//
-// HashAlgorithm is mandatory and must start with a canonical algorithm name
-// (SHA1, SHA256, SHA384, SHA512). The first whitespace-separated token is
-// uppercased and matched; trailing tokens (e.g. "{ ... }" in Nitro-style
-// values) are ignored. The canonical name is stored.
-type PCRGoldenValues struct {
-	HashAlgorithm string
-	PCRs          map[int]string
-}
-
-// UnmarshalJSON parses a JSON object with "HashAlgorithm" and dynamic "PCR\d+"
-// keys into the PCRGoldenValues struct.
+// UnmarshalJSON parses a JSON object with "N" or "PCRN" keys into PCRGoldenValues.
 func (v *PCRGoldenValues) UnmarshalJSON(data []byte) error {
 	var raw map[string]string
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
-	algRaw, ok := raw["HashAlgorithm"]
-	if !ok || algRaw == "" {
-		return fmt.Errorf("HashAlgorithm is required")
-	}
-	canon := strings.ToUpper(strings.Fields(algRaw)[0])
-	if _, valid := DigestBytes[canon]; !valid {
-		return fmt.Errorf("unsupported HashAlgorithm %q (expected SHA1, SHA256, SHA384, or SHA512)", canon)
-	}
-	v.HashAlgorithm = canon
-
-	digestSize := DigestBytes[canon]
-	v.PCRs = make(map[int]string)
+	m := make(PCRGoldenValues, len(raw))
 	for key, val := range raw {
-		if key == "HashAlgorithm" {
-			continue
+		numStr := key
+		if strings.HasPrefix(key, "PCR") {
+			numStr = key[3:]
 		}
-		if !strings.HasPrefix(key, "PCR") {
-			continue
-		}
-		idx, err := strconv.Atoi(key[3:])
+		idx, err := strconv.Atoi(numStr)
 		if err != nil {
 			return fmt.Errorf("invalid PCR key %q: %w", key, err)
 		}
@@ -205,11 +169,9 @@ func (v *PCRGoldenValues) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return fmt.Errorf("PCR%d: invalid hex: %w", idx, err)
 		}
-		if len(decoded) != digestSize {
-			return fmt.Errorf("PCR%d: value is %d bytes, expected %d for %s", idx, len(decoded), digestSize, canon)
-		}
-		v.PCRs[idx] = val
+		m[idx] = decoded
 	}
+	*v = m
 	return nil
 }
 

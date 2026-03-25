@@ -113,8 +113,8 @@ Compare the golden measurements against the parsed evidence:
 
 | TEE type | Evidence field | Endorsement field |
 |----------|---------------|-------------------|
-| Nitro NSM | `doc.PCRs[N]` | `nitronsm.Measurements.PCRN` |
-| NitroTPM | `doc.NitroTPMPCRs[N]` | `nitrotpm.Measurements.PCRN` |
+| Nitro NSM | `doc.PCRs[N]` | `nitronsm.PCRN` or `nitronsm.N` |
+| NitroTPM | `doc.NitroTPMPCRs[N]` | `nitrotpm.PCRN` or `nitrotpm.N` |
 | SEV-SNP | `report.Measurement` | `sevsnp` (hex string) |
 | TDX | `quote.TdQuoteBody.MrTd`, `.Rtmrs[N]` | `tdx.MRTD`, `.RTMRN` |
 
