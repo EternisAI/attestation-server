@@ -165,6 +165,41 @@ func TestCRLURLsForEvidence(t *testing.T) {
 	})
 }
 
+func TestTdxVerifyOpt(t *testing.T) {
+	t.Run("revocation disabled", func(t *testing.T) {
+		s := &Server{cfg: &Config{RevocationEnabled: false}}
+		opt := s.tdxVerifyOpt()
+		if opt.CheckRevocations {
+			t.Error("expected CheckRevocations=false when revocation is disabled")
+		}
+		if opt.Getter != nil {
+			t.Error("expected nil Getter when revocation is disabled")
+		}
+	})
+
+	t.Run("revocation enabled without getter", func(t *testing.T) {
+		s := &Server{cfg: &Config{RevocationEnabled: true}}
+		opt := s.tdxVerifyOpt()
+		if !opt.CheckRevocations {
+			t.Error("expected CheckRevocations=true when revocation is enabled")
+		}
+		// Getter is nil when tdxGetter is not configured — the library
+		// falls back to its default HTTP client.
+	})
+
+	t.Run("revocation enabled with getter", func(t *testing.T) {
+		getter := &cachedHTTPSGetter{}
+		s := &Server{cfg: &Config{RevocationEnabled: true}, tdxGetter: getter}
+		opt := s.tdxVerifyOpt()
+		if !opt.CheckRevocations {
+			t.Error("expected CheckRevocations=true")
+		}
+		if opt.Getter != getter {
+			t.Error("expected Getter to be the configured tdxGetter")
+		}
+	})
+}
+
 func TestSevsnpRevocationChecker(t *testing.T) {
 	t.Run("nil cache returns nil checker", func(t *testing.T) {
 		s := &Server{}

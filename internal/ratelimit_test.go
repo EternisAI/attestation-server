@@ -188,6 +188,35 @@ func TestRateLimitMiddleware_TimeoutReturns429(t *testing.T) {
 	}
 }
 
+func TestRateLimiterMap_Cleanup(t *testing.T) {
+	m := newRateLimiterMap(1.0, 1)
+
+	// Create two entries: one "old" and one "recent".
+	_ = m.get("old-ip")
+	_ = m.get("recent-ip")
+
+	// Manually backdate the "old" entry.
+	if val, ok := m.entries.Load("old-ip"); ok {
+		val.(*rateLimiterEntry).lastSeen = time.Now().Add(-10 * time.Minute)
+	}
+
+	// Cleanup with 5m maxAge should remove "old-ip" but keep "recent-ip".
+	m.cleanup(5 * time.Minute)
+
+	if _, ok := m.entries.Load("old-ip"); ok {
+		t.Error("expected old-ip to be cleaned up")
+	}
+	if _, ok := m.entries.Load("recent-ip"); !ok {
+		t.Error("expected recent-ip to survive cleanup")
+	}
+}
+
+func TestRateLimiterMap_Cleanup_EmptyMap(t *testing.T) {
+	m := newRateLimiterMap(1.0, 1)
+	// Should not panic on empty map.
+	m.cleanup(5 * time.Minute)
+}
+
 func TestRateLimitMiddleware_PerIPIsolation(t *testing.T) {
 	s := &Server{
 		logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -333,6 +334,70 @@ func TestErrorHandler_PlainError_OpaqueMessage(t *testing.T) {
 	}
 	if !contains(bodyStr, "internal error") {
 		t.Errorf("5xx response should contain generic message, got %s", bodyStr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NewLogger
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// NewTimestamp
+// ---------------------------------------------------------------------------
+
+func TestNewTimestamp_Format(t *testing.T) {
+	ts := NewTimestamp()
+	// Must be valid RFC 3339.
+	parsed, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		t.Fatalf("NewTimestamp() = %q, not valid RFC 3339: %v", ts, err)
+	}
+	// Must be truncated to seconds (no sub-second component).
+	if parsed.Nanosecond() != 0 {
+		t.Errorf("NewTimestamp() has sub-second precision: %v", parsed)
+	}
+	// Must be in UTC.
+	if parsed.Location() != time.UTC {
+		t.Errorf("NewTimestamp() not in UTC: %v", parsed.Location())
+	}
+}
+
+func TestNewTimestamp_Freshness(t *testing.T) {
+	before := time.Now().UTC().Truncate(time.Second)
+	ts := NewTimestamp()
+	after := time.Now().UTC().Truncate(time.Second).Add(time.Second)
+
+	parsed, _ := time.Parse(time.RFC3339, ts)
+	if parsed.Before(before) || parsed.After(after) {
+		t.Errorf("NewTimestamp() = %v, not within [%v, %v]", parsed, before, after)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// shutdownCtx
+// ---------------------------------------------------------------------------
+
+func TestShutdownCtx_NilCtx(t *testing.T) {
+	s := &Server{} // ctx is nil (pre-Run state)
+	ctx := s.shutdownCtx()
+	if ctx == nil {
+		t.Fatal("shutdownCtx() returned nil, want context.Background()")
+	}
+	// Should not be cancelled.
+	select {
+	case <-ctx.Done():
+		t.Error("shutdownCtx() context should not be cancelled")
+	default:
+	}
+}
+
+func TestShutdownCtx_SetCtx(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &Server{ctx: parent}
+	ctx := s.shutdownCtx()
+	if ctx != parent {
+		t.Error("shutdownCtx() should return the server's context when set")
 	}
 }
 
