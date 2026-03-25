@@ -215,7 +215,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 			s.logger.Error("tdx attestation failed", "error", err, "request_id", requestID)
 			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 		}
-		quote, err := tdx.VerifyEvidence(blob, digest, time.Now(), s.cfg.RevocationEnabled)
+		quote, err := tdx.VerifyEvidence(blob, digest, time.Now(), s.tdxVerifyOpt())
 		if err != nil {
 			s.logger.Error("tdx verification failed", "error", err, "request_id", requestID)
 			return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
@@ -338,6 +338,19 @@ func (s *Server) sevsnpRevocationChecker() sevsnp.RevocationChecker {
 		return nil
 	}
 	return s.crlCache.CheckRevocation
+}
+
+// tdxVerifyOpt returns a VerifyOpt for TDX evidence. When revocation checking
+// is enabled, it includes the cached collateral getter (if available) to
+// avoid per-request Intel PCS round-trips.
+func (s *Server) tdxVerifyOpt() tdx.VerifyOpt {
+	if !s.cfg.RevocationEnabled {
+		return tdx.VerifyOpt{}
+	}
+	return tdx.VerifyOpt{
+		CheckRevocations: true,
+		Getter:           s.tdxGetter,
+	}
 }
 
 func isValidHexFingerprint(s string) bool {

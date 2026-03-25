@@ -231,3 +231,75 @@ func fetchOnce(ctx context.Context, client *http.Client, u *url.URL) ([]byte, ht
 
 	return body, resp.Header, nil
 }
+
+// cachedHTTPSGetterEntry stores a cached (header, body) pair from an
+// HTTPSGetter response, keyed by URL in the shared fetcherCache.
+type cachedHTTPSGetterEntry struct {
+	header map[string][]string
+	body   []byte
+}
+
+// cachedHTTPSGetter implements trust.HTTPSGetter with URL-keyed caching
+// backed by the shared ristretto fetcherCache. On cache hit the network is
+// skipped entirely. On miss the inner getter is called and the response is
+// cached with a TTL derived from the response headers (defaulting to 30 min
+// when no Cache-Control is present, which is the case for Intel PCS).
+type cachedHTTPSGetter struct {
+	inner  *simpleHTTPSGetter
+	cache  *fetcherCache
+	logger *slog.Logger
+}
+
+// simpleHTTPSGetter is a proxy-aware replacement for trust.SimpleHTTPSGetter.
+// The go-tdx-guest default getter uses bare http.Get (http.DefaultTransport),
+// which always honours proxy env vars. When http.allow_proxy is false we want
+// to suppress that, so this getter uses the server's fetchHTTPClient which
+// only sets Proxy when explicitly allowed.
+type simpleHTTPSGetter struct {
+	client *http.Client
+}
+
+func (g *simpleHTTPSGetter) Get(rawURL string) (map[string][]string, []byte, error) {
+	resp, err := g.client.Get(rawURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return nil, nil, fmt.Errorf("failed to retrieve %s, status code %d", rawURL, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, fetchMaxResponseBytes))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return resp.Header, body, nil
+}
+
+func (g *cachedHTTPSGetter) Get(rawURL string) (map[string][]string, []byte, error) {
+	if val, ok := g.cache.get(rawURL); ok {
+		if entry, ok := val.(*cachedHTTPSGetterEntry); ok {
+			if g.logger != nil {
+				g.logger.Debug("tdx collateral cache hit", "url", rawURL)
+			}
+			return entry.header, entry.body, nil
+		}
+	}
+
+	header, body, err := g.inner.Get(rawURL)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ttl := parseCacheTTL(http.Header(header))
+	entry := &cachedHTTPSGetterEntry{header: header, body: body}
+	g.cache.setGroup([]string{rawURL}, entry, len(body), ttl)
+
+	if g.logger != nil {
+		g.logger.Debug("tdx collateral cached", "url", rawURL, "size", len(body), "ttl", ttl.String())
+	}
+
+	return header, body, nil
+}

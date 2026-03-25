@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -943,6 +944,86 @@ func TestFetchWithRetry_ContextCancelled(t *testing.T) {
 	_, _, err := fetchWithRetry(ctx, srv.Client(), u, slog.Default())
 	if err == nil {
 		t.Fatal("expected error when context expires")
+	}
+}
+
+// --- cachedHTTPSGetter ---
+
+func TestCachedHTTPSGetter_CachesResponse(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("X-Test", "value")
+		w.Write([]byte(`response`))
+	}))
+	defer srv.Close()
+
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	getter := &cachedHTTPSGetter{
+		inner:  &simpleHTTPSGetter{client: srv.Client()},
+		cache:  cache,
+		logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+	}
+
+	// First call: cache miss → network fetch
+	header, body, err := getter.Get(srv.URL + "/collateral")
+	if err != nil {
+		t.Fatalf("first Get: %v", err)
+	}
+	if string(body) != "response" {
+		t.Errorf("body = %q, want %q", string(body), "response")
+	}
+	if http.Header(header).Get("X-Test") != "value" {
+		t.Errorf("header X-Test = %q, want %q", http.Header(header).Get("X-Test"), "value")
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("expected 1 network call, got %d", atomic.LoadInt32(&calls))
+	}
+
+	// Second call: cache hit → no network
+	header2, body2, err := getter.Get(srv.URL + "/collateral")
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if string(body2) != "response" {
+		t.Errorf("cached body = %q, want %q", string(body2), "response")
+	}
+	if http.Header(header2).Get("X-Test") != "value" {
+		t.Errorf("cached header X-Test = %q, want %q", http.Header(header2).Get("X-Test"), "value")
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("expected still 1 network call after cache hit, got %d", atomic.LoadInt32(&calls))
+	}
+}
+
+func TestCachedHTTPSGetter_PropagatesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	getter := &cachedHTTPSGetter{
+		inner: &simpleHTTPSGetter{client: srv.Client()},
+		cache: cache,
+	}
+
+	_, _, err = getter.Get(srv.URL + "/fail")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+
+	// Error should not be cached
+	if _, ok := cache.get(srv.URL + "/fail"); ok {
+		t.Fatal("error response should not be cached")
 	}
 }
 

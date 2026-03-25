@@ -18,7 +18,7 @@ internal/config.go         # Config struct and LoadConfig() (package app)
 internal/dependencies.go   # Transitive dependency attestation: parallel fetch, verify, cycle detection (package app)
 internal/cosign.go         # Cosign signature verification: bundle fetch, Sigstore/Rekor verification, Fulcio OID extraction + validation (package app)
 internal/endorsements.go   # Endorsement document fetching, DNSSEC, measurement validation, cosign integration (package app)
-internal/fetch.go          # Generic HTTP fetch with retry, per-attempt WARN logging, cache (ristretto), TTL parsing — shared by endorsements and cosign (package app)
+internal/fetch.go          # Generic HTTP fetch with retry, per-attempt WARN logging, cache (ristretto), TTL parsing, cachedHTTPSGetter for TDX collateral — shared by endorsements, cosign, and TDX (package app)
 internal/logging.go        # NewLogger() (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS certificate/CA loading, verification, and hot-reload (package app)
@@ -217,7 +217,7 @@ The `sevsnp` package additionally exports `SplitEvidence` (split a blob into raw
 Both `sevsnp.VerifyEvidence` and `tdx.VerifyEvidence` accept optional variadic parameters for revocation checking. These are omitted by standalone callers (backward-compatible) and provided by the attestation server when revocation is enabled:
 
 - `sevsnp.VerifyEvidence(blob, reportData, now, checkers ...RevocationChecker)` — optional callback checking the endorsement key (VCEK/VLEK) certificate against a CRL
-- `tdx.VerifyEvidence(rawQuote, reportData, now, checkRevocations ...bool)` — when true, enables go-tdx-guest's built-in Intel PCS collateral fetching and CRL checking
+- `tdx.VerifyEvidence(rawQuote, reportData, now, opts ...VerifyOpt)` — `VerifyOpt` contains `CheckRevocations bool` (enables go-tdx-guest Intel PCS collateral fetching and CRL checking) and `Getter trust.HTTPSGetter` (overrides the HTTP client used for collateral fetching; the server provides a caching getter backed by the shared ristretto cache to avoid per-request Intel PCS round-trips)
 
 ## SEV-SNP workarounds (pkg/sevsnp)
 
@@ -295,7 +295,7 @@ Over-limit requests are **stalled** (blocked in a FIFO queue) up to `ratelimit.s
 When `revocation.enabled` is true (the default), the server checks TEE endorsement key certificates against Certificate Revocation Lists. CRL fetching is conditional on configuration:
 
 - **SEV-SNP**: A background goroutine fetches AMD KDS CRLs for all supported product lines (Milan, Genoa, Turin) at `revocation.refresh_interval` (default 12h). Both VCEK and VLEK CRLs are fetched. CRLs are initialized when local SEV-SNP evidence is enabled **or** when dependency endpoints are configured (dependencies may include SEV-SNP evidence requiring revocation checks). The `crlCache` stores parsed `x509.RevocationList` entries and checks endorsement key serial numbers during verification. Design is **fail-open**: if no CRL data is available yet (first fetch still pending or failed), certificates are accepted. CRL fetches use the server's `fetchHTTPClient()` and honour `http.allow_proxy`.
-- **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching (`CheckRevocations: true, GetCollateral: true`). This happens per-request and adds network latency. The library uses `http.DefaultTransport` (via `trust.SimpleHTTPSGetter`) which always honours `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars regardless of the `http.allow_proxy` setting.
+- **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching (`CheckRevocations: true, GetCollateral: true`). The server provides a `cachedHTTPSGetter` (via `VerifyOpt.Getter`) that caches Intel PCS responses (TCB info, QE identity, PCK CRL, Root CA CRL) in the shared ristretto cache. On cache hit, no network calls are made. TTL is derived from response `Cache-Control` headers; Intel PCS currently returns no cache headers, so the default 30-minute TTL applies. The go-tdx-guest library still validates `NextUpdate` expiry on all collateral, so stale cached data is rejected. The cached getter uses the server's `fetchHTTPClient()` and honours `http.allow_proxy`.
 - **Nitro**: No CRL mechanism exists (ephemeral certificate chains per attestation; revocation is handled by AWS at the hypervisor level).
 
 When disabled, a startup warning is logged: "certificate revocation checking is disabled, revoked TEE endorsement keys will be accepted".

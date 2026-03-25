@@ -240,8 +240,8 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 	}
 
 	parsed, err := verifyDependencyReport(&report, nonceHex, privFP, time.Now(), revocationOpts{
-		sevsnpChecker:       s.sevsnpRevocationChecker(),
-		tdxCheckRevocations: s.cfg.RevocationEnabled,
+		sevsnpChecker: s.sevsnpRevocationChecker(),
+		tdxVerifyOpt:  s.tdxVerifyOpt(),
 	})
 	if err != nil {
 		if isE2EError(err) {
@@ -277,8 +277,8 @@ func isE2EError(err error) bool {
 // revocationOpts holds optional revocation checking callbacks for dependency
 // verification. Zero value means no revocation checking.
 type revocationOpts struct {
-	sevsnpChecker       sevsnp.RevocationChecker
-	tdxCheckRevocations bool
+	sevsnpChecker sevsnp.RevocationChecker
+	tdxVerifyOpt  tdx.VerifyOpt
 }
 
 // verifyDependencyReportOnly is a convenience wrapper around
@@ -366,8 +366,11 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 			}
 			parsed.sevSNPReport = report
 		case "tdx":
-			tdxRevoke := len(revOpts) > 0 && revOpts[0].tdxCheckRevocations
-			quote, err := tdx.VerifyEvidence(ev.Blob, digest, now, tdxRevoke)
+			var tdxOpt tdx.VerifyOpt
+			if len(revOpts) > 0 {
+				tdxOpt = revOpts[0].tdxVerifyOpt
+			}
+			quote, err := tdx.VerifyEvidence(ev.Blob, digest, now, tdxOpt)
 			if err != nil {
 				return nil, fmt.Errorf("tdx verification: %w", err)
 			}

@@ -49,6 +49,7 @@ type Server struct {
 	rateLimitHandler fiber.Handler
 	rateLimiters     *rateLimiterMap
 	crlCache         *crlCache
+	tdxGetter        *cachedHTTPSGetter
 	dnssecResolver   *dnssec.Resolver
 }
 
@@ -280,6 +281,21 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		if len(crlURLs) > 0 {
 			s.crlCache = newCRLCache(logger)
 			logger.Info("certificate revocation checking enabled", "crl_urls", len(crlURLs), "refresh_interval", cfg.RevocationRefreshInterval.String())
+		}
+		if cfg.ReportEvidence.TDX || len(cfg.DependencyEndpoints) > 0 {
+			if s.httpCache == nil {
+				cache, err := newFetcherCache(cfg.HTTPCacheSize)
+				if err != nil {
+					return nil, err
+				}
+				s.httpCache = cache
+			}
+			s.tdxGetter = &cachedHTTPSGetter{
+				inner:  &simpleHTTPSGetter{client: s.fetchHTTPClient()},
+				cache:  s.httpCache,
+				logger: logger,
+			}
+			logger.Info("tdx collateral caching enabled")
 		}
 	} else {
 		logger.Warn("certificate revocation checking is disabled, revoked TEE endorsement keys will be accepted")

@@ -14,9 +14,23 @@ import (
 	"github.com/google/go-tdx-guest/client"
 	pb "github.com/google/go-tdx-guest/proto/tdx"
 	"github.com/google/go-tdx-guest/verify"
+	"github.com/google/go-tdx-guest/verify/trust"
 
 	"github.com/eternisai/attestation-server/pkg/hexbytes"
 )
+
+// VerifyOpt holds optional parameters for VerifyEvidence.
+type VerifyOpt struct {
+	// CheckRevocations enables fetching collateral from the Intel PCS and
+	// checking the PCK certificate chain against CRLs. This adds network
+	// latency unless a caching Getter is provided.
+	CheckRevocations bool
+
+	// Getter overrides the HTTP client used to fetch Intel PCS collateral.
+	// When nil, the go-tdx-guest default (http.Get with retry) is used.
+	// Set a caching implementation to avoid per-request network round-trips.
+	Getter trust.HTTPSGetter
+}
 
 // intelSGXRootCAPEM is the Intel SGX Root CA certificate used to verify the
 // PCK certificate chain in TDX attestation quotes.
@@ -110,11 +124,13 @@ func (t *Device) GetEvidence(reportData [64]byte) ([]byte, error) {
 // PCK certificate chain against the Intel SGX Root CA, and validates that the
 // report data field matches the expected value.
 //
-// When checkRevocations is true, collateral is fetched from the Intel PCS and
-// the PCK certificate chain is checked against CRLs. This adds network
-// latency to each verification call. When false (the default for standalone
-// callers), verification is offline with no collateral fetching.
-func VerifyEvidence(rawQuote []byte, expectedReportData [64]byte, now time.Time, checkRevocations ...bool) (*pb.QuoteV4, error) {
+// When VerifyOpt.CheckRevocations is true, collateral is fetched from the
+// Intel PCS and the PCK certificate chain is checked against CRLs. Provide a
+// caching Getter via VerifyOpt.Getter to avoid per-request network
+// round-trips; when nil the go-tdx-guest default (http.Get with retry) is
+// used. Without any VerifyOpt, verification is offline with no collateral
+// fetching.
+func VerifyEvidence(rawQuote []byte, expectedReportData [64]byte, now time.Time, opts ...VerifyOpt) (*pb.QuoteV4, error) {
 	parsed, err := abi.QuoteToProto(rawQuote)
 	if err != nil {
 		return nil, fmt.Errorf("parsing tdx quote: %w", err)
@@ -129,14 +145,18 @@ func VerifyEvidence(rawQuote []byte, expectedReportData [64]byte, now time.Time,
 		now = time.Now()
 	}
 
-	revoke := len(checkRevocations) > 0 && checkRevocations[0]
-	opts := &verify.Options{
-		CheckRevocations: revoke,
-		GetCollateral:    revoke,
+	var opt VerifyOpt
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	verifyOpts := &verify.Options{
+		CheckRevocations: opt.CheckRevocations,
+		GetCollateral:    opt.CheckRevocations,
+		Getter:           opt.Getter,
 		TrustedRoots:     intelSGXRootPool,
 		Now:              now,
 	}
-	if err := verify.TdxQuote(quote, opts); err != nil {
+	if err := verify.TdxQuote(quote, verifyOpts); err != nil {
 		return nil, fmt.Errorf("tdx quote verification failed: %w", err)
 	}
 
