@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -141,10 +142,23 @@ type PCREndorsement struct {
 	Measurements PCRGoldenValues `json:"Measurements"`
 }
 
+// DigestBytes maps canonical hash algorithm names to their output size in bytes.
+var DigestBytes = map[string]int{
+	"SHA1":   20,
+	"SHA256": 32,
+	"SHA384": 48,
+	"SHA512": 64,
+}
+
 // PCRGoldenValues holds a hash algorithm identifier and a set of PCR index →
 // hex-encoded golden value pairs. The JSON representation uses dynamic keys
 // ("HashAlgorithm", "PCR0", "PCR1", …, "PCR24") which are handled by a
 // custom UnmarshalJSON.
+//
+// HashAlgorithm is mandatory and must start with a canonical algorithm name
+// (SHA1, SHA256, SHA384, SHA512). The first whitespace-separated token is
+// uppercased and matched; trailing tokens (e.g. "{ ... }" in Nitro-style
+// values) are ignored. The canonical name is stored.
 type PCRGoldenValues struct {
 	HashAlgorithm string
 	PCRs          map[int]string
@@ -157,10 +171,21 @@ func (v *PCRGoldenValues) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	v.HashAlgorithm = raw["HashAlgorithm"]
+
+	algRaw, ok := raw["HashAlgorithm"]
+	if !ok || algRaw == "" {
+		return fmt.Errorf("HashAlgorithm is required")
+	}
+	canon := strings.ToUpper(strings.Fields(algRaw)[0])
+	if _, valid := DigestBytes[canon]; !valid {
+		return fmt.Errorf("unsupported HashAlgorithm %q (expected SHA1, SHA256, SHA384, or SHA512)", canon)
+	}
+	v.HashAlgorithm = canon
+
+	digestSize := DigestBytes[canon]
 	v.PCRs = make(map[int]string)
 	for key, val := range raw {
-		if key == "HashAlgorithm" || val == "" {
+		if key == "HashAlgorithm" {
 			continue
 		}
 		if !strings.HasPrefix(key, "PCR") {
@@ -172,6 +197,16 @@ func (v *PCRGoldenValues) UnmarshalJSON(data []byte) error {
 		}
 		if idx < 0 || idx > 24 {
 			return fmt.Errorf("PCR index %d out of range 0-24", idx)
+		}
+		if val == "" {
+			return fmt.Errorf("PCR%d: empty value", idx)
+		}
+		decoded, err := hex.DecodeString(val)
+		if err != nil {
+			return fmt.Errorf("PCR%d: invalid hex: %w", idx, err)
+		}
+		if len(decoded) != digestSize {
+			return fmt.Errorf("PCR%d: value is %d bytes, expected %d for %s", idx, len(decoded), digestSize, canon)
 		}
 		v.PCRs[idx] = val
 	}

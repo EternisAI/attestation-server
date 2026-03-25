@@ -23,6 +23,11 @@ import (
 // --- PCRGoldenValues UnmarshalJSON ---
 
 func TestPCRGoldenValues_UnmarshalJSON(t *testing.T) {
+	sha384Hex := strings.Repeat("aa", 48)
+	sha384Hex2 := strings.Repeat("bb", 48)
+	sha384Hex3 := strings.Repeat("cc", 48)
+	sha256Hex := strings.Repeat("dd", 32)
+
 	tests := []struct {
 		name      string
 		input     string
@@ -32,21 +37,20 @@ func TestPCRGoldenValues_UnmarshalJSON(t *testing.T) {
 	}{
 		{
 			name:     "nitro nsm style",
-			input:    `{"HashAlgorithm":"Sha384 { ... }","PCR0":"aabb","PCR1":"ccdd","PCR2":"eeff"}`,
-			wantAlg:  "Sha384 { ... }",
-			wantPCRs: map[int]string{0: "aabb", 1: "ccdd", 2: "eeff"},
+			input:    `{"HashAlgorithm":"Sha384 { ... }","PCR0":"` + sha384Hex + `","PCR1":"` + sha384Hex2 + `","PCR2":"` + sha384Hex3 + `"}`,
+			wantAlg:  "SHA384",
+			wantPCRs: map[int]string{0: sha384Hex, 1: sha384Hex2, 2: sha384Hex3},
 		},
 		{
 			name:     "nitro tpm style",
-			input:    `{"HashAlgorithm":"SHA384 { ... }","PCR4":"1111","PCR7":"2222","PCR12":"3333"}`,
-			wantAlg:  "SHA384 { ... }",
-			wantPCRs: map[int]string{4: "1111", 7: "2222", 12: "3333"},
+			input:    `{"HashAlgorithm":"SHA384 { ... }","PCR4":"` + sha384Hex + `","PCR7":"` + sha384Hex2 + `","PCR12":"` + sha384Hex3 + `"}`,
+			wantAlg:  "SHA384",
+			wantPCRs: map[int]string{4: sha384Hex, 7: sha384Hex2, 12: sha384Hex3},
 		},
 		{
-			name:     "empty PCR value skipped",
-			input:    `{"HashAlgorithm":"SHA256","PCR0":"aabb","PCR1":""}`,
-			wantAlg:  "SHA256",
-			wantPCRs: map[int]string{0: "aabb"},
+			name:      "empty PCR value rejected",
+			input:     `{"HashAlgorithm":"SHA256","PCR0":"` + sha256Hex + `","PCR1":""}`,
+			wantError: true,
 		},
 		{
 			name:     "no PCRs",
@@ -55,13 +59,43 @@ func TestPCRGoldenValues_UnmarshalJSON(t *testing.T) {
 			wantPCRs: map[int]string{},
 		},
 		{
+			name:      "missing HashAlgorithm",
+			input:     `{"PCR0":"aabb"}`,
+			wantError: true,
+		},
+		{
+			name:      "empty HashAlgorithm",
+			input:     `{"HashAlgorithm":"","PCR0":"aabb"}`,
+			wantError: true,
+		},
+		{
+			name:      "unsupported HashAlgorithm",
+			input:     `{"HashAlgorithm":"MD5","PCR0":"aabb"}`,
+			wantError: true,
+		},
+		{
+			name:      "empty PCR value",
+			input:     `{"HashAlgorithm":"SHA384","PCR0":""}`,
+			wantError: true,
+		},
+		{
+			name:      "invalid PCR hex",
+			input:     `{"HashAlgorithm":"SHA384","PCR0":"not-valid-hex"}`,
+			wantError: true,
+		},
+		{
+			name:      "wrong digest length",
+			input:     `{"HashAlgorithm":"SHA384","PCR0":"aabb"}`,
+			wantError: true,
+		},
+		{
 			name:      "invalid PCR index",
-			input:     `{"HashAlgorithm":"SHA384","PCRnotanumber":"aabb"}`,
+			input:     `{"HashAlgorithm":"SHA384","PCRnotanumber":"` + sha384Hex + `"}`,
 			wantError: true,
 		},
 		{
 			name:      "PCR index out of range",
-			input:     `{"HashAlgorithm":"SHA384","PCR25":"aabb"}`,
+			input:     `{"HashAlgorithm":"SHA384","PCR25":"` + sha384Hex + `"}`,
 			wantError: true,
 		},
 	}
@@ -97,12 +131,19 @@ func TestPCRGoldenValues_UnmarshalJSON(t *testing.T) {
 // --- EndorsementDocument parsing ---
 
 func TestParseEndorsementDocument(t *testing.T) {
+	pcr384a := strings.Repeat("aa", 48)
+	pcr384b := strings.Repeat("bb", 48)
+	pcr384c := strings.Repeat("cc", 48)
+	pcr384d := strings.Repeat("dd", 48)
+	pcr384e := strings.Repeat("ee", 48)
+	pcr256 := strings.Repeat("ff", 32)
+
 	doc := `{
-		"nitronsm": {"Measurements": {"HashAlgorithm": "Sha384 { ... }", "PCR0": "aa", "PCR1": "bb", "PCR2": "cc"}},
-		"nitrotpm": {"Measurements": {"HashAlgorithm": "SHA384 { ... }", "PCR4": "dd", "PCR7": "ee"}},
+		"nitronsm": {"Measurements": {"HashAlgorithm": "Sha384 { ... }", "PCR0": "` + pcr384a + `", "PCR1": "` + pcr384b + `", "PCR2": "` + pcr384c + `"}},
+		"nitrotpm": {"Measurements": {"HashAlgorithm": "SHA384 { ... }", "PCR4": "` + pcr384d + `", "PCR7": "` + pcr384e + `"}},
 		"sevsnp": "aabbccddee00112233445566778899aabbccddee00112233445566778899aabbccddee001122334455667788aabbccdd",
 		"tdx": {"MRTD": "1122", "RTMR0": "3344"},
-		"tpm": {"Measurements": {"HashAlgorithm": "SHA256", "PCR0": "ff00"}}
+		"tpm": {"Measurements": {"HashAlgorithm": "SHA256", "PCR0": "` + pcr256 + `"}}
 	}`
 
 	var ed EndorsementDocument
@@ -113,15 +154,18 @@ func TestParseEndorsementDocument(t *testing.T) {
 	if ed.NitroNSM == nil {
 		t.Fatal("NitroNSM is nil")
 	}
-	if got := ed.NitroNSM.Measurements.PCRs[0]; got != "aa" {
-		t.Errorf("NitroNSM PCR0 = %q, want %q", got, "aa")
+	if got := ed.NitroNSM.Measurements.HashAlgorithm; got != "SHA384" {
+		t.Errorf("NitroNSM HashAlgorithm = %q, want %q", got, "SHA384")
+	}
+	if got := ed.NitroNSM.Measurements.PCRs[0]; got != pcr384a {
+		t.Errorf("NitroNSM PCR0 = %q, want %q", got, pcr384a)
 	}
 
 	if ed.NitroTPM == nil {
 		t.Fatal("NitroTPM is nil")
 	}
-	if got := ed.NitroTPM.Measurements.PCRs[4]; got != "dd" {
-		t.Errorf("NitroTPM PCR4 = %q, want %q", got, "dd")
+	if got := ed.NitroTPM.Measurements.PCRs[4]; got != pcr384d {
+		t.Errorf("NitroTPM PCR4 = %q, want %q", got, pcr384d)
 	}
 
 	if ed.SEVSNP == nil {
@@ -147,25 +191,25 @@ func TestParseEndorsementDocument(t *testing.T) {
 	if ed.TPM == nil {
 		t.Fatal("TPM is nil")
 	}
-	if got := ed.TPM.Measurements.PCRs[0]; got != "ff00" {
-		t.Errorf("TPM PCR0 = %q, want %q", got, "ff00")
+	if got := ed.TPM.Measurements.PCRs[0]; got != pcr256 {
+		t.Errorf("TPM PCR0 = %q, want %q", got, pcr256)
 	}
 }
 
 // --- Measurement comparison ---
 
 func TestValidateNitroNSMMeasurements(t *testing.T) {
+	pcr0 := bytes.Repeat([]byte{0xaa}, 48)
+	pcr1 := bytes.Repeat([]byte{0xcc}, 48)
+	pcr2 := bytes.Repeat([]byte{0xee}, 48)
 	doc := &nitro.AttestationDocument{
-		PCRs: map[int][]byte{
-			0: {0xaa, 0xbb},
-			1: {0xcc, 0xdd},
-			2: {0xee, 0xff},
-		},
+		PCRs: map[int][]byte{0: pcr0, 1: pcr1, 2: pcr2},
 	}
 
 	t.Run("match", func(t *testing.T) {
 		endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{0: "aabb", 1: "ccdd", 2: "eeff"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{0: strings.Repeat("aa", 48), 1: strings.Repeat("cc", 48), 2: strings.Repeat("ee", 48)},
 		}}
 		if err := validateNitroNSMMeasurements(doc, endorsement); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -174,7 +218,8 @@ func TestValidateNitroNSMMeasurements(t *testing.T) {
 
 	t.Run("mismatch", func(t *testing.T) {
 		endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{0: "aabb", 1: "0000"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{0: strings.Repeat("aa", 48), 1: strings.Repeat("00", 48)},
 		}}
 		err := validateNitroNSMMeasurements(doc, endorsement)
 		if err == nil {
@@ -187,7 +232,8 @@ func TestValidateNitroNSMMeasurements(t *testing.T) {
 
 	t.Run("missing PCR in evidence", func(t *testing.T) {
 		endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{8: "aabb"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{8: strings.Repeat("aa", 48)},
 		}}
 		err := validateNitroNSMMeasurements(doc, endorsement)
 		if err == nil {
@@ -202,15 +248,16 @@ func TestValidateNitroNSMMeasurements(t *testing.T) {
 func TestValidateNitroTPMMeasurements(t *testing.T) {
 	doc := &nitro.AttestationDocument{
 		NitroTPMPCRs: map[int][]byte{
-			4:  {0x11, 0x22},
-			7:  {0x33, 0x44},
-			12: {0x55, 0x66},
+			4:  bytes.Repeat([]byte{0x11}, 48),
+			7:  bytes.Repeat([]byte{0x33}, 48),
+			12: bytes.Repeat([]byte{0x55}, 48),
 		},
 	}
 
 	t.Run("match", func(t *testing.T) {
 		endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{4: "1122", 7: "3344", 12: "5566"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{4: strings.Repeat("11", 48), 7: strings.Repeat("33", 48), 12: strings.Repeat("55", 48)},
 		}}
 		if err := validateNitroTPMMeasurements(doc, endorsement); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -219,7 +266,8 @@ func TestValidateNitroTPMMeasurements(t *testing.T) {
 
 	t.Run("mismatch", func(t *testing.T) {
 		endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{4: "ffff"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{4: strings.Repeat("ff", 48)},
 		}}
 		err := validateNitroTPMMeasurements(doc, endorsement)
 		if err == nil {
@@ -303,13 +351,14 @@ func TestValidateTDXMeasurements(t *testing.T) {
 
 func TestValidateTPMMeasurements(t *testing.T) {
 	pcrs := map[int]hexbytes.Bytes{
-		0: {0xaa, 0xbb},
-		1: {0xcc, 0xdd},
+		0: bytes.Repeat([]byte{0xaa}, 48),
+		1: bytes.Repeat([]byte{0xcc}, 48),
 	}
 
 	t.Run("match", func(t *testing.T) {
 		endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{0: "aabb", 1: "ccdd"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{0: strings.Repeat("aa", 48), 1: strings.Repeat("cc", 48)},
 		}}
 		if err := validateTPMMeasurements(pcrs, endorsement); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -318,7 +367,8 @@ func TestValidateTPMMeasurements(t *testing.T) {
 
 	t.Run("subset match", func(t *testing.T) {
 		endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{0: "aabb"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{0: strings.Repeat("aa", 48)},
 		}}
 		if err := validateTPMMeasurements(pcrs, endorsement); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -327,7 +377,8 @@ func TestValidateTPMMeasurements(t *testing.T) {
 
 	t.Run("mismatch", func(t *testing.T) {
 		endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{1: "ffff"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{1: strings.Repeat("ff", 48)},
 		}}
 		err := validateTPMMeasurements(pcrs, endorsement)
 		if err == nil {
@@ -576,20 +627,25 @@ func TestValidateEndorsementsAgainstEvidence(t *testing.T) {
 	// Shared self-attestation results with known measurements.
 	sa := &parsedSelfAttestation{
 		nitroNSMDoc: &nitro.AttestationDocument{
-			PCRs: map[int][]byte{0: {0xaa}, 1: {0xbb}, 2: {0xcc}},
+			PCRs: map[int][]byte{
+				0: bytes.Repeat([]byte{0xaa}, 48),
+				1: bytes.Repeat([]byte{0xbb}, 48),
+				2: bytes.Repeat([]byte{0xcc}, 48),
+			},
 		},
 		sevSNPReport: &spb.Report{
 			Measurement: bytes.Repeat([]byte{0xdd}, 48),
 		},
 		tpmPCRs: map[int]hexbytes.Bytes{
-			0: {0x11, 0x22},
+			0: bytes.Repeat([]byte{0x11}, 48),
 		},
 	}
 
 	t.Run("nitronsm match", func(t *testing.T) {
 		doc := &EndorsementDocument{
 			NitroNSM: &PCREndorsement{Measurements: PCRGoldenValues{
-				PCRs: map[int]string{0: "aa", 1: "bb", 2: "cc"},
+				HashAlgorithm: "SHA384",
+				PCRs:          map[int]string{0: strings.Repeat("aa", 48), 1: strings.Repeat("bb", 48), 2: strings.Repeat("cc", 48)},
 			}},
 		}
 		cfg := &Config{ReportEvidence: EvidenceConfig{NitroNSM: true}}
@@ -659,7 +715,8 @@ func TestValidateEndorsementsAgainstEvidence(t *testing.T) {
 	t.Run("tpm match", func(t *testing.T) {
 		doc := &EndorsementDocument{
 			TPM: &PCREndorsement{Measurements: PCRGoldenValues{
-				PCRs: map[int]string{0: "1122"},
+				HashAlgorithm: "SHA384",
+				PCRs:          map[int]string{0: strings.Repeat("11", 48)},
 			}},
 		}
 		cfg := &Config{TPM: TPMConfig{Enabled: true}}
@@ -1127,7 +1184,8 @@ func TestValidateDependencyEndorsements_TPMData(t *testing.T) {
 
 	doc := &EndorsementDocument{
 		TPM: &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{0: "aabb"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{0: strings.Repeat("aa", 48)},
 		}},
 	}
 	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
@@ -1135,8 +1193,8 @@ func TestValidateDependencyEndorsements_TPMData(t *testing.T) {
 	reportData := &AttestationReportData{
 		Endorsements: []string{"https://dep.example.com/e.json"},
 		TPMData: &TPMData{
-			Digest: "SHA256",
-			PCRs:   map[int]hexbytes.Bytes{0: {0xaa, 0xbb}},
+			Digest: "SHA384",
+			PCRs:   map[int]hexbytes.Bytes{0: bytes.Repeat([]byte{0xaa}, 48)},
 		},
 	}
 	dataJSON, _ := json.Marshal(reportData)
@@ -1166,7 +1224,8 @@ func TestValidateDependencyEndorsements_NitroNSM(t *testing.T) {
 
 	doc := &EndorsementDocument{
 		NitroNSM: &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{0: "aabb", 1: "ccdd"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{0: strings.Repeat("aa", 48), 1: strings.Repeat("cc", 48)},
 		}},
 	}
 	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
@@ -1184,7 +1243,7 @@ func TestValidateDependencyEndorsements_NitroNSM(t *testing.T) {
 		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
 		parsed := &parsedDependencyEvidence{
 			nitroNSMDoc: &nitro.AttestationDocument{
-				PCRs: map[int][]byte{0: {0xaa, 0xbb}, 1: {0xcc, 0xdd}},
+				PCRs: map[int][]byte{0: bytes.Repeat([]byte{0xaa}, 48), 1: bytes.Repeat([]byte{0xcc}, 48)},
 			},
 		}
 		if err := s.validateDependencyEndorsements(context.Background(), report, parsed); err != nil {
@@ -1200,7 +1259,7 @@ func TestValidateDependencyEndorsements_NitroNSM(t *testing.T) {
 		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
 		parsed := &parsedDependencyEvidence{
 			nitroNSMDoc: &nitro.AttestationDocument{
-				PCRs: map[int][]byte{0: {0xff, 0xff}, 1: {0xcc, 0xdd}},
+				PCRs: map[int][]byte{0: bytes.Repeat([]byte{0xff}, 48), 1: bytes.Repeat([]byte{0xcc}, 48)},
 			},
 		}
 		err := s.validateDependencyEndorsements(context.Background(), report, parsed)
@@ -1237,7 +1296,8 @@ func TestValidateDependencyEndorsements_NitroTPM(t *testing.T) {
 
 	doc := &EndorsementDocument{
 		NitroTPM: &PCREndorsement{Measurements: PCRGoldenValues{
-			PCRs: map[int]string{4: "1122"},
+			HashAlgorithm: "SHA384",
+			PCRs:          map[int]string{4: strings.Repeat("11", 48)},
 		}},
 	}
 	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
@@ -1255,7 +1315,7 @@ func TestValidateDependencyEndorsements_NitroTPM(t *testing.T) {
 		s := &Server{cfg: &Config{EndorsementClientTimeout: 5 * time.Second}, httpCache: cache}
 		parsed := &parsedDependencyEvidence{
 			nitroTPMDoc: &nitro.AttestationDocument{
-				NitroTPMPCRs: map[int][]byte{4: {0x11, 0x22}},
+				NitroTPMPCRs: map[int][]byte{4: bytes.Repeat([]byte{0x11}, 48)},
 			},
 		}
 		if err := s.validateDependencyEndorsements(context.Background(), report, parsed); err != nil {
@@ -1388,20 +1448,6 @@ func TestValidateDependencyEndorsements_TPMNoEndorsement(t *testing.T) {
 
 // --- Edge case tests for measurement comparison ---
 
-func TestComparePCRs_EmptyEndorsementValue(t *testing.T) {
-	actual := map[int][]byte{0: {}}
-	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-		PCRs: map[int]string{0: ""},
-	}}
-	err := comparePCRs(actual, endorsement)
-	if err == nil {
-		t.Fatal("expected error for empty endorsement value")
-	}
-	if !contains(err.Error(), "empty value") {
-		t.Errorf("error %q does not mention empty value", err)
-	}
-}
-
 func TestValidateSEVSNPMeasurement_Empty(t *testing.T) {
 	report := &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)}
 	err := validateSEVSNPMeasurement(report, "")
@@ -1413,52 +1459,11 @@ func TestValidateSEVSNPMeasurement_Empty(t *testing.T) {
 	}
 }
 
-func TestValidateTPMMeasurements_EmptyEndorsementValue(t *testing.T) {
-	pcrs := map[int]hexbytes.Bytes{0: {0xaa}}
-	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-		PCRs: map[int]string{0: ""},
-	}}
-	err := validateTPMMeasurements(pcrs, endorsement)
-	if err == nil {
-		t.Fatal("expected error for empty endorsement value")
-	}
-	if !contains(err.Error(), "empty value") {
-		t.Errorf("error %q does not mention empty value", err)
-	}
-}
-
-func TestComparePCRs_InvalidHexInEndorsement(t *testing.T) {
-	actual := map[int][]byte{0: {0xaa, 0xbb}}
-	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-		PCRs: map[int]string{0: "not-valid-hex"},
-	}}
-	err := comparePCRs(actual, endorsement)
-	if err == nil {
-		t.Fatal("expected error for invalid hex in endorsement")
-	}
-	if !contains(err.Error(), "invalid hex") {
-		t.Errorf("error %q does not mention invalid hex", err)
-	}
-}
-
-func TestValidateTPMMeasurements_InvalidHex(t *testing.T) {
-	pcrs := map[int]hexbytes.Bytes{0: {0xaa}}
-	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-		PCRs: map[int]string{0: "zzzz"},
-	}}
-	err := validateTPMMeasurements(pcrs, endorsement)
-	if err == nil {
-		t.Fatal("expected error for invalid hex in endorsement")
-	}
-	if !contains(err.Error(), "invalid hex") {
-		t.Errorf("error %q does not mention invalid hex", err)
-	}
-}
-
 func TestValidateTPMMeasurements_MissingPCR(t *testing.T) {
 	pcrs := map[int]hexbytes.Bytes{0: {0xaa}}
 	endorsement := &PCREndorsement{Measurements: PCRGoldenValues{
-		PCRs: map[int]string{5: "aabb"},
+		HashAlgorithm: "SHA384",
+		PCRs:          map[int]string{5: strings.Repeat("aa", 48)},
 	}}
 	err := validateTPMMeasurements(pcrs, endorsement)
 	if err == nil {
@@ -1515,7 +1520,7 @@ func TestGetRTMR_OutOfRange(t *testing.T) {
 }
 
 func TestPCRGoldenValues_UnmarshalJSON_NegativeIndex(t *testing.T) {
-	input := `{"HashAlgorithm":"SHA384","PCR-1":"aabb"}`
+	input := `{"HashAlgorithm":"SHA384","PCR-1":"` + strings.Repeat("aa", 48) + `"}`
 	var v PCRGoldenValues
 	err := json.Unmarshal([]byte(input), &v)
 	if err == nil {
@@ -1568,11 +1573,13 @@ func FuzzParseByteSize(f *testing.F) {
 // never panics on arbitrary JSON. Endorsement documents come from
 // external URLs.
 func FuzzPCRGoldenValues_UnmarshalJSON(f *testing.F) {
-	f.Add(`{"HashAlgorithm":"SHA384","PCR0":"aabb"}`)
+	f.Add(`{"HashAlgorithm":"SHA384","PCR0":"` + strings.Repeat("aa", 48) + `"}`)
 	f.Add(`{}`)
 	f.Add(`{"PCR99":"ff"}`)
 	f.Add(`not json`)
 	f.Add(`{"PCR-1":"aa","PCRabc":"bb"}`)
+	f.Add(`{"HashAlgorithm":"MD5","PCR0":"aabb"}`)
+	f.Add(`{"HashAlgorithm":"","PCR0":"aabb"}`)
 	f.Fuzz(func(t *testing.T, input string) {
 		var v PCRGoldenValues
 		json.Unmarshal([]byte(input), &v)

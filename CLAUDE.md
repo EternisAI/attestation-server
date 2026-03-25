@@ -314,7 +314,7 @@ When `paths.endorsements` is configured with endorsement URLs, the server fetche
 ### Endorsement document format
 
 A JSON object with evidence-type keys (`nitronsm`, `nitrotpm`, `sevsnp`, `tdx`, `tpm`):
-- **NitroNSM/NitroTPM/TPM**: `{"Measurements": {"HashAlgorithm": "...", "PCR0": "hex", ...}}`
+- **NitroNSM/NitroTPM/TPM**: `{"Measurements": {"HashAlgorithm": "...", "PCR0": "hex", ...}}` — `HashAlgorithm` is mandatory; the first whitespace-separated token is uppercased and must be one of `SHA1`, `SHA256`, `SHA384`, `SHA512` (e.g. both `"Sha384 { ... }"` Nitro-style and plain `"SHA384"` are accepted; the canonical name is stored). Each PCR value must be valid hex encoding exactly the digest size declared by the algorithm. These constraints are enforced at JSON parse time (`PCRGoldenValues.UnmarshalJSON`) so that downstream comparison functions (`comparePCRs`, `validateTPMMeasurements`) can trust the values are well-formed.
 - **SEV-SNP**: a single hex string (96 chars = 384-bit launch measurement)
 - **TDX**: `{"MRTD": "hex", "RTMR0": "hex", "RTMR1": "hex", "RTMR2": "hex"}` (all optional)
 

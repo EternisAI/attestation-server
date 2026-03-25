@@ -371,12 +371,10 @@ func validateNitroTPMMeasurements(doc *nitro.AttestationDocument, endorsement *P
 }
 
 // comparePCRs compares actual PCR values (map[int][]byte) against golden
-// values from an endorsement.
+// values from an endorsement. PCR hex values are validated at parse time
+// (UnmarshalJSON); this function only compares.
 func comparePCRs(actual map[int][]byte, endorsement *PCREndorsement) error {
 	for idx, expectedHex := range endorsement.Measurements.PCRs {
-		if expectedHex == "" {
-			return fmt.Errorf("PCR%d: empty value in endorsement", idx)
-		}
 		expected, err := hex.DecodeString(expectedHex)
 		if err != nil {
 			return fmt.Errorf("PCR%d: invalid hex in endorsement: %w", idx, err)
@@ -461,12 +459,10 @@ func getRTMR(body *pb.TDQuoteBody, idx int) []byte {
 }
 
 // validateTPMMeasurements compares generic TPM PCR values against golden
-// values from an endorsement.
+// values from an endorsement. PCR hex values are validated at parse time
+// (UnmarshalJSON); this function only compares.
 func validateTPMMeasurements(pcrs map[int]hexbytes.Bytes, endorsement *PCREndorsement) error {
 	for idx, expectedHex := range endorsement.Measurements.PCRs {
-		if expectedHex == "" {
-			return fmt.Errorf("PCR%d: empty value in endorsement", idx)
-		}
 		expected, err := hex.DecodeString(expectedHex)
 		if err != nil {
 			return fmt.Errorf("PCR%d: invalid hex in endorsement: %w", idx, err)

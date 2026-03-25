@@ -177,6 +177,9 @@ Per-request, endorsements are re-validated from cache (ristretto, TTL from Cache
 
 ```jsonc
 {
+  // HashAlgorithm is mandatory; first token uppercased must be SHA1|SHA256|SHA384|SHA512.
+  // Both "Sha384 { ... }" (Nitro-style) and plain "SHA384" are accepted.
+  // PCR values must be valid hex of exactly the algorithm's digest size.
   "nitronsm": { "Measurements": { "HashAlgorithm": "...", "PCR0": "<hex>", ... } },
   "nitrotpm": { "Measurements": { "HashAlgorithm": "...", "PCR4": "<hex>", ... } },
   "sevsnp": "<hex>",                    // 96-char hex = 384-bit launch measurement
