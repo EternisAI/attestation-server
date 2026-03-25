@@ -31,8 +31,8 @@ There is no runtime configuration surface for these components. An attacker who 
 
 Every attestation response must include evidence that the request arrived over an encrypted channel. This is enforced by requiring at least one of:
 
-- **`data.tls.client.certificate`** — SHA-256 fingerprint of the client certificate, extracted from Envoy's XFCC header. This proves the request traversed an mTLS connection within the dependency chain.
-- **`data.tls.public.certificate`** — fingerprint of the server's public TLS certificate. This covers external clients who connect without a client certificate (Internet ingress).
+- **`data.tls.client`** — SHA-256 fingerprint of the client certificate (leaf DER), extracted from Envoy's XFCC header. This proves the request traversed an mTLS connection within the dependency chain.
+- **`data.tls.public`** — SHA-256 fingerprint of the server's public TLS certificate (leaf DER). This covers external clients who connect without a client certificate (Internet ingress).
 
 If neither is present, the handler returns 400. This prevents attestation responses from being generated on unencrypted channels.
 
@@ -42,7 +42,7 @@ Private TLS key material is loaded inside the TEE and never leaves it. The certi
 
 ### Dependency e2e verification
 
-After cryptographically verifying a dependency's attestation report, the server checks that `data.tls.client.certificate` in the dependency's response matches the SHA-256 fingerprint of the private certificate that was presented as the TLS client cert when connecting. This confirms:
+After cryptographically verifying a dependency's attestation report, the server checks that `data.tls.client` in the dependency's response matches the SHA-256 fingerprint of the private certificate that was presented as the TLS client cert when connecting. This confirms:
 
 - The dependency saw our specific client certificate (not a proxy's)
 - The connection was encrypted end-to-end between the two TEEs
@@ -50,12 +50,16 @@ After cryptographically verifying a dependency's attestation report, the server 
 
 If the fingerprint is missing or mismatched, a descriptive error is logged but an opaque error is returned to the caller (preventing information leakage about the internal certificate infrastructure).
 
+### XFCC header validation
+
+The server rejects requests with multiple comma-separated XFCC entries (HTTP 400). Multiple entries indicate proxy intermediaries in the TLS path, which breaks the direct end-to-end encryption guarantee. The design assumes a single forwarded client certificate entry per request — each hop in the dependency chain is a direct mTLS connection between TEEs, not a multi-hop proxy chain.
+
 ## Nonce binding
 
 All server metadata is bound to the attestation evidence through a cryptographic hash chain:
 
 ```
-report_data = { request_id, nonce, build_info, tls, endorsements, user_data, secure_boot, tpm }
+report_data = { timestamp, request_id, nonce, build_info, tls, endorsements, user_data, secure_boot, tpm }
 digest      = SHA-512(JSON(report_data))
 evidence    = TEE_Attest(digest)
 ```
@@ -98,6 +102,12 @@ Before collecting evidence for each request, the handler calls `validateOwnEndor
 - **Cache hit** — pointer comparison against the cached document (sub-microsecond)
 - **Cache miss** (TTL expired) — documents are re-fetched and revalidated
 - **Failure** — handler returns 500, but the server stays up and self-heals when endorsements become available
+
+### Endorsement domain allowlist
+
+When `endorsements.allowed_domains` is configured (non-empty), endorsement document URLs are checked against the allowlist before fetching. Matching is exact hostname (case-insensitive) — subdomain matching is not supported; each host must be listed explicitly. The check applies to both own endorsement URLs and dependency endorsement URLs.
+
+An empty allowlist logs a startup warning because dependency attestation reports can contain attacker-controlled endorsement URLs — a compromised dependency could point to a malicious server, and the domain allowlist is the first defense against this (cosign verification is the second).
 
 ### Empty value rejection
 

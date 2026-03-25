@@ -18,13 +18,18 @@ Intel TDX (Trust Domain Extensions) guest attestation: quote retrieval via Confi
 quote, err := tdx.VerifyEvidence(rawQuote, expectedReportData, time.Now())
 
 // With online revocation checking via Intel PCS:
-quote, err := tdx.VerifyEvidence(rawQuote, expectedReportData, time.Now(), true)
+quote, err := tdx.VerifyEvidence(rawQuote, expectedReportData, time.Now(),
+    tdx.VerifyOpt{CheckRevocations: true})
+
+// With a caching getter to avoid per-request round-trips:
+quote, err := tdx.VerifyEvidence(rawQuote, expectedReportData, time.Now(),
+    tdx.VerifyOpt{CheckRevocations: true, Getter: myGetter})
 // quote.TdQuoteBody.MrTd — TD measurement
 // quote.TdQuoteBody.Rtmrs — runtime measurement registers
 // quote.TdQuoteBody.ReportData — the 64-byte report data
 ```
 
-When `checkRevocations` is true, collateral is fetched from the Intel PCS and the PCK certificate chain is checked against CRLs. This adds network latency to each verification call.
+When `CheckRevocations` is true, collateral is fetched from the Intel PCS and the PCK certificate chain is checked against CRLs. Provide a caching `Getter` implementation to avoid per-request network latency.
 
 ### Device access (requires ConfigFS TDX support)
 
@@ -43,15 +48,20 @@ The `QuoteProvider` is stateless (empty struct) and creates an isolated temporar
 
 ## Verification options
 
-By default, verification is performed offline without fetching collateral or checking revocation lists. When the optional `checkRevocations` parameter is true, the library fetches collateral from Intel PCS and checks CRLs:
+By default, verification is performed offline without fetching collateral or checking revocation lists. Pass a `VerifyOpt` to enable revocation checking:
 
 ```go
-// Default (offline):
+// Default (offline, no VerifyOpt):
 verify.Options{CheckRevocations: false, GetCollateral: false, TrustedRoots: intelSGXRootPool, Now: now}
 
-// With revocation checking (online):
+// With VerifyOpt{CheckRevocations: true} (online):
 verify.Options{CheckRevocations: true, GetCollateral: true, TrustedRoots: intelSGXRootPool, Now: now}
+
+// With VerifyOpt{CheckRevocations: true, Getter: myGetter} (online, cached):
+// Same as above but uses the provided Getter for HTTP fetches instead of the default
 ```
+
+`VerifyOpt.Getter` overrides the HTTP client used for Intel PCS collateral fetching. The attestation server provides a caching getter backed by a shared ristretto cache to avoid per-request network round-trips.
 
 ## Embedded trust anchor
 

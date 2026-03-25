@@ -87,7 +87,8 @@ The attestation response from Edge TEE (A) embeds verified reports from B and C,
 
 - **Key types**: ECDSA or RSA (RSA allowed for Internet compatibility)
 - **Purpose**: Proves server identity to external clients who connect without client certificates
-- **In attestation**: Included as `data.tls.public.certificate` (SHA-256 fingerprint of the leaf DER) and `data.tls.public.public_key` (SHA-256 of the SPKI DER)
+- **Verification**: At load time, the certificate chain is verified against the system/Mozilla root CA pool (unless `tls.public.skip_verify` is set for development or internal-CA scenarios)
+- **In attestation**: Included as `data.tls.public` — SHA-256 fingerprint of the leaf certificate DER
 
 ### Private certificate
 
@@ -95,8 +96,8 @@ The attestation response from Edge TEE (A) embeds verified reports from B and C,
 - **Purpose**: Service-to-service mTLS within the dependency chain
 - **CA requirement**: All private certificates in the dependency chain must be issued by the same CA — Envoy only populates the XFCC header when the client cert passes CA verification
 - **Key confinement**: Private key material is loaded inside the TEE and never leaves it. The certificate fingerprints bound into the attestation evidence prove that the TLS channel terminates inside a specific TEE instance.
-- **In attestation**: Included as `data.tls.private.certificate` and `data.tls.private.public_key`
-- **Client cert**: When a request arrives via the private listener, Envoy's XFCC header provides the caller's client certificate hash, included as `data.tls.client.certificate`
+- **In attestation**: Included as `data.tls.private` — SHA-256 fingerprint of the leaf certificate DER
+- **Client cert**: When a request arrives via the private listener, Envoy's XFCC header provides the caller's client certificate hash, included as `data.tls.client`
 
 ### SPIFFE readiness
 
@@ -145,6 +146,12 @@ The dependency HTTP client is hardened against slowloris-like attacks:
 | Overall request | 30s |
 
 Response bodies are limited to 4 MiB. Keep-alives are disabled so each request gets a fresh TLS handshake, ensuring certificate rotation is respected.
+
+## HTTP proxy support
+
+When `http.allow_proxy` is enabled, the server's outbound HTTP clients (endorsement/cosign fetches, SEV-SNP CRL fetches, dependency requests) honour `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` environment variables. This is off by default and required in environments like AWS Nitro Enclaves where a vsock-proxy is the only egress path.
+
+Note: TDX collateral fetching (go-tdx-guest) always honours proxy env vars via `http.DefaultTransport` regardless of this setting — the server cannot override it.
 
 ## Endorsement lifecycle
 

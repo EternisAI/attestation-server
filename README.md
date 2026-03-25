@@ -102,13 +102,14 @@ Returns an attestation report with hardware-signed evidence and server metadata.
     }
   ],
   "data": {
+    "timestamp": "2025-01-15T12:00:00Z",  // RFC 3339, truncated to seconds
     "request_id": "...",
     "nonce": "<hex>",             // echoed caller nonce
     "build_info": { ... },        // SLSA provenance (Fulcio OID fields)
     "tls": {
-      "client": { "certificate": "<sha256-hex>" },   // from XFCC (mTLS mode)
-      "public": { "certificate": "<sha256-hex>", "public_key": "<sha256-hex>" },
-      "private": { "certificate": "<sha256-hex>", "public_key": "<sha256-hex>" }
+      "client": "<sha256-hex>",    // from XFCC (mTLS mode)
+      "public": "<sha256-hex>",    // SHA-256 of public cert leaf DER
+      "private": "<sha256-hex>"    // SHA-256 of private cert leaf DER
     },
     "endorsements": [ "https://..." ],   // public URLs of golden measurements
     "secure_boot": true,

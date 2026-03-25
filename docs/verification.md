@@ -7,7 +7,7 @@ This document describes how a client verifies an attestation response from the s
 An attestation response contains three parts:
 
 1. **`evidence`** — one or more hardware-signed blobs from the TEE platform
-2. **`data`** — server metadata (build info, TLS fingerprints, nonce, endorsement URLs) that was hashed into the evidence nonce
+2. **`data`** — server metadata (timestamp, build info, TLS fingerprints, nonce, endorsement URLs) that was hashed into the evidence nonce
 3. **`dependencies`** — (optional) recursively verified attestation reports from downstream services
 
 The verification steps are:
@@ -35,6 +35,8 @@ Then check that this digest matches the nonce inside the evidence blob:
 | TDX | `report_data` field in the TD quote body (64 bytes) |
 
 If the caller supplied a nonce via the `nonce` query parameter or `x-attestation-nonce` header, verify that `data.nonce` matches it.
+
+The `data.timestamp` field (RFC 3339, truncated to seconds) records when the report was generated. Verifiers should check that it is recent (within an acceptable window) to detect stale or replayed responses — the caller-supplied nonce provides replay protection, but the timestamp adds defense-in-depth and enables staleness detection when nonces are not used.
 
 ## Step 2: Evidence verification
 
@@ -73,10 +75,15 @@ import "github.com/eternisai/attestation-server/pkg/tdx"
 quote, err := tdx.VerifyEvidence(blob, expectedDigest, time.Now())
 
 // With online revocation checking via Intel PCS:
-quote, err := tdx.VerifyEvidence(blob, expectedDigest, time.Now(), true)
+quote, err := tdx.VerifyEvidence(blob, expectedDigest, time.Now(),
+    tdx.VerifyOpt{CheckRevocations: true})
+
+// With a caching getter to avoid per-request network round-trips:
+quote, err := tdx.VerifyEvidence(blob, expectedDigest, time.Now(),
+    tdx.VerifyOpt{CheckRevocations: true, Getter: myGetter})
 ```
 
-This parses the QuoteV4, verifies the ECDSA-P256 signature and PCK certificate chain against the embedded Intel SGX Root CA, and checks the report data. When `checkRevocations` is true, collateral is fetched from the Intel PCS and the PCK certificate chain is checked against CRLs (adds network latency).
+This parses the QuoteV4, verifies the ECDSA-P256 signature and PCK certificate chain against the embedded Intel SGX Root CA, and checks the report data. When `CheckRevocations` is true, collateral is fetched from the Intel PCS and the PCK certificate chain is checked against CRLs (adds network latency unless a caching `Getter` is provided).
 
 ### Chained evidence (NitroTPM + SEV-SNP)
 
@@ -92,8 +99,8 @@ This binding confirms both evidence blobs originated from the same request.
 
 After verifying the evidence, confirm the TLS channel matches the attestation:
 
-- **Public endpoint (edge mode)**: verify that `data.tls.public.certificate` matches the SHA-256 fingerprint of the server certificate you observed during the TLS handshake. This confirms the attestation was produced by the same TEE that terminated your TLS connection.
-- **mTLS endpoint (internal mode)**: verify that `data.tls.client.certificate` matches the SHA-256 fingerprint of your own client certificate. This confirms the server saw your specific cert, proving end-to-end encryption between your TEE and the attesting TEE.
+- **Public endpoint (edge mode)**: verify that `data.tls.public` matches the SHA-256 fingerprint of the server's leaf certificate DER you observed during the TLS handshake. This confirms the attestation was produced by the same TEE that terminated your TLS connection.
+- **mTLS endpoint (internal mode)**: verify that `data.tls.client` matches the SHA-256 fingerprint of your own client certificate's leaf DER. This confirms the server saw your specific cert, proving end-to-end encryption between your TEE and the attesting TEE.
 
 Also inspect `data.build_info` to verify the build provenance matches expected values (source repository, commit, builder identity).
 
@@ -127,7 +134,7 @@ Fetch the cosign signature bundle from `<endorsement_url>.sig` and verify it aga
 Each entry in `dependencies` is a complete attestation report with the same structure. Verify recursively using the same steps above. Key checks:
 
 - **Nonce binding**: the dependency's nonce should match the nonce digest from the parent's `data`
-- **Client certificate**: the dependency's `data.tls.client.certificate` should match the parent's private certificate fingerprint (`data.tls.private.certificate`), confirming mTLS between the two TEEs
+- **Client certificate**: the dependency's `data.tls.client` should match the parent's private certificate fingerprint (`data.tls.private`), confirming mTLS between the two TEEs
 - **Endorsements**: the dependency's endorsement documents should be fetched and validated independently — each service in the chain has its own build provenance and golden measurements from its own CI/CD pipeline
 
 ## Example: minimal Go verifier
@@ -159,7 +166,7 @@ var data AttestationReportData
 json.Unmarshal(report.Data, &data)
 // verify data.Nonce == myNonce
 // verify data.BuildInfo matches expectations
-// verify data.TLS.Public.CertificateFingerprint matches observed TLS cert
+// verify hex.EncodeToString(data.TLS.Public) matches observed TLS cert fingerprint
 
 // 5. Fetch and verify endorsements
 for _, url := range data.Endorsements {
@@ -171,6 +178,6 @@ for _, url := range data.Endorsements {
 // 6. Verify dependencies recursively
 for _, dep := range report.Dependencies {
     // parse as AttestationReport, repeat steps 2-5
-    // verify dep's data.TLS.Client.CertificateFingerprint == data.TLS.Private.CertificateFingerprint
+    // verify dep's data.TLS.Client == data.TLS.Private (same cert fingerprint)
 }
 ```
