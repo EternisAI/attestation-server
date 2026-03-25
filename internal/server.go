@@ -357,6 +357,16 @@ func loadEndorsements(path string) ([]*url.URL, error) {
 	return urls, nil
 }
 
+// shutdownCtx returns the server's lifecycle context. It falls back to
+// context.Background() when called before Run (e.g. during unit tests
+// that construct Server directly).
+func (s *Server) shutdownCtx() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
+}
+
 // Run starts the HTTP listener and blocks until ctx is cancelled or a fatal error occurs.
 func (s *Server) Run(ctx context.Context) error {
 	s.ctx = ctx

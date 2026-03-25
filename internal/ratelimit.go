@@ -87,7 +87,7 @@ func (s *Server) rateLimitMiddleware() fiber.Handler {
 
 		limiter := s.rateLimiters.get(ip)
 
-		ctx, cancel := context.WithTimeout(c.UserContext(), stallTimeout)
+		ctx, cancel := context.WithTimeout(s.shutdownCtx(), stallTimeout)
 		defer cancel()
 
 		if err := limiter.Wait(ctx); err != nil {

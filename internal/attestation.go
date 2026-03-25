@@ -174,8 +174,11 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	}
 
 	// Validate own endorsements (cached fast-path or re-fetch on TTL expiry).
+	// Use the server's shutdown context so that backoff sleeps in
+	// fetchWithRetry are interrupted on graceful shutdown. Fiber's
+	// c.UserContext() is context.Background() and is never cancelled.
 	if len(s.endorsements) > 0 {
-		if err := s.validateOwnEndorsements(c.UserContext()); err != nil {
+		if err := s.validateOwnEndorsements(s.shutdownCtx()); err != nil {
 			s.logger.Error("endorsement validation failed", "request_id", requestID, "error", err)
 			return fiber.NewError(upstreamErrorCode(err), "endorsement validation failed")
 		}
