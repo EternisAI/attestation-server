@@ -174,14 +174,19 @@ func fetchWithRetry(ctx context.Context, client *http.Client, u *url.URL, logger
 
 	for {
 		attempt++
+		start := time.Now()
 		body, header, err := fetchOnce(ctx, client, u)
+		dur := time.Since(start)
 		if err == nil {
+			if logger != nil {
+				logger.Debug("fetch attempt succeeded", "url", u.String(), "attempt", attempt, "duration_ms", dur.Milliseconds())
+			}
 			return body, header, nil
 		}
 		lastErr = err
 
 		if logger != nil {
-			logger.Warn("fetch attempt failed", "url", u.String(), "attempt", attempt, "error", err)
+			logger.Warn("fetch attempt failed", "url", u.String(), "attempt", attempt, "duration_ms", dur.Milliseconds(), "error", err)
 		}
 
 		if ctx.Err() != nil {

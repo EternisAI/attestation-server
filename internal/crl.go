@@ -124,9 +124,11 @@ func crlURLsForEvidence(cfg *Config) []string {
 // Errors are logged but do not prevent other CRLs from being fetched.
 func (c *crlCache) refreshAll(ctx context.Context, client *http.Client, urls []string) {
 	for _, url := range urls {
+		start := time.Now()
 		crl, err := fetchCRL(ctx, client, url)
+		dur := time.Since(start)
 		if err != nil {
-			c.logger.Warn("crl fetch failed", "url", url, "error", err)
+			c.logger.Warn("crl fetch failed", "url", url, "duration_ms", dur.Milliseconds(), "error", err)
 			continue
 		}
 
@@ -134,7 +136,7 @@ func (c *crlCache) refreshAll(ctx context.Context, client *http.Client, urls []s
 		c.entries[url] = &crlEntry{crl: crl, fetchedAt: time.Now()}
 		c.mu.Unlock()
 
-		c.logger.Debug("crl fetched", "url", url, "entries", len(crl.RevokedCertificateEntries))
+		c.logger.Debug("crl fetched", "url", url, "duration_ms", dur.Milliseconds(), "entries", len(crl.RevokedCertificateEntries))
 	}
 }
 

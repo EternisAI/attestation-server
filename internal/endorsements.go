@@ -152,6 +152,9 @@ func (s *Server) resolveEndorsementsWithClient(ctx context.Context, urls []*url.
 
 	if s.httpCache != nil {
 		s.httpCache.setGroup(urlStrs, doc, rawSize, ttl)
+		if s.logger != nil {
+			s.logger.Debug("cached endorsement document", "url", urlStrs[0], "ttl", ttl.String())
+		}
 	}
 
 	var cr *cosignResult
@@ -173,6 +176,9 @@ func (s *Server) resolveEndorsementsWithClient(ctx context.Context, urls []*url.
 		}
 		if s.httpCache != nil {
 			s.httpCache.setGroup(sigURLStrs, cr, sigRawSize, cosignTTL)
+			if s.logger != nil {
+				s.logger.Debug("cached cosign signature", "url", sigURLStrs[0], "ttl", cosignTTL.String())
+			}
 		}
 	}
 
