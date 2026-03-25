@@ -46,6 +46,7 @@ type Server struct {
 	selfAttestation  *parsedSelfAttestation
 	httpCache        *fetcherCache
 	sigstoreVerifier *verify.Verifier
+	rateLimitHandler fiber.Handler
 	rateLimiters     *rateLimiterMap
 	crlCache         *crlCache
 	dnssecResolver   *dnssec.Resolver
@@ -299,8 +300,8 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		Generator: func() string { return uuid.NewString() },
 	}))
 	if cfg.RateLimitEnabled {
-		s.app.Use(s.rateLimitMiddleware())
-		logger.Info("rate limiting enabled for edge requests",
+		s.rateLimitHandler = s.rateLimitMiddleware()
+		logger.Info("rate limiting enabled for attestation endpoint",
 			"rps", cfg.RateLimitRPS,
 			"burst", cfg.RateLimitBurst,
 			"stall_timeout", cfg.RateLimitStallTimeout.String())
@@ -475,7 +476,12 @@ func (s *Server) accessLog() fiber.Handler {
 }
 
 func (s *Server) setupRoutes() {
-	s.app.Get("/api/v1/attestation", s.handleAttestation)
+	handlers := []fiber.Handler{}
+	if s.rateLimitHandler != nil {
+		handlers = append(handlers, s.rateLimitHandler)
+	}
+	handlers = append(handlers, s.handleAttestation)
+	s.app.Get("/api/v1/attestation", handlers...)
 }
 
 // readSecureBootState reads the UEFI SecureBoot variable from sysfs.

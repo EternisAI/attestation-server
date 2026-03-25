@@ -279,7 +279,7 @@ The dependency mTLS HTTP client enforces TLS 1.3 minimum. The endorsement/cosign
 
 ## Rate limiting
 
-When `ratelimit.enabled` is true, a per-IP rate limiting middleware protects the server from resource exhaustion by edge clients. The middleware only applies to requests **without** an `x-forwarded-client-cert` (XFCC) header — service-to-service mTLS traffic is never rate-limited.
+When `ratelimit.enabled` is true, a per-IP rate limiting handler is chained on the attestation endpoint (`/api/v1/attestation`) to protect the server from resource exhaustion by edge clients. It is scoped to this endpoint because attestation involves blocking TEE hardware operations; future lightweight endpoints should not inherit this restriction. The handler only applies to requests **without** an `x-forwarded-client-cert` (XFCC) header — service-to-service mTLS traffic is never rate-limited.
 
 Client IP is extracted with priority: `X-Envoy-Original-IP` header > first entry in `X-Forwarded-For` > connection IP. Extracted values are validated as IP addresses to prevent header injection from creating unbounded map entries.
 
