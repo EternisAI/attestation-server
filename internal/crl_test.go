@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -120,12 +121,22 @@ func TestFetchCRL(t *testing.T) {
 }
 
 func TestCRLURLsForEvidence(t *testing.T) {
+	depURL, _ := url.Parse("https://dep.example.com")
+
 	t.Run("sevsnp enabled", func(t *testing.T) {
 		cfg := &Config{ReportEvidence: EvidenceConfig{SEVSNP: true}}
 		urls := crlURLsForEvidence(cfg)
 		// 3 product lines × 2 signer types = 6 URLs
 		if len(urls) != 6 {
 			t.Errorf("expected 6 CRL URLs for SEV-SNP, got %d", len(urls))
+		}
+	})
+
+	t.Run("dependencies configured without local sevsnp", func(t *testing.T) {
+		cfg := &Config{DependencyEndpoints: []*url.URL{depURL}}
+		urls := crlURLsForEvidence(cfg)
+		if len(urls) != 6 {
+			t.Errorf("expected 6 CRL URLs when dependencies configured, got %d", len(urls))
 		}
 	})
 
@@ -145,7 +156,7 @@ func TestCRLURLsForEvidence(t *testing.T) {
 		}
 	})
 
-	t.Run("none enabled", func(t *testing.T) {
+	t.Run("none enabled no dependencies", func(t *testing.T) {
 		cfg := &Config{}
 		urls := crlURLsForEvidence(cfg)
 		if len(urls) != 0 {

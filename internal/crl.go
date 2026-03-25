@@ -100,11 +100,13 @@ func fetchCRL(ctx context.Context, client *http.Client, url string) (*x509.Revoc
 }
 
 // crlURLsForEvidence returns the CRL URLs that should be fetched based on
-// which evidence types are enabled.
+// the server configuration. SEV-SNP CRLs are fetched when local SEV-SNP
+// evidence is enabled OR when dependency endpoints are configured, since
+// dependencies may include SEV-SNP evidence that requires revocation checking.
 func crlURLsForEvidence(cfg *Config) []string {
 	var urls []string
 
-	if cfg.ReportEvidence.SEVSNP {
+	if cfg.ReportEvidence.SEVSNP || len(cfg.DependencyEndpoints) > 0 {
 		for _, prod := range amdProductLines {
 			urls = append(urls, fmt.Sprintf(amdVCEKCRLTemplate, prod))
 			urls = append(urls, fmt.Sprintf(amdVLEKCRLTemplate, prod))

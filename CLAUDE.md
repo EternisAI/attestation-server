@@ -162,7 +162,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_TDX` | `report.evidence.tdx` | `false` | Enable Intel TDX evidence (exclusive: cannot combine with others) |
 | `ATTESTATION_SERVER_TPM_ENABLED` | `tpm.enabled` | `false` | Enable generic TPM PCR reading via /dev/tpmrm0; auto-disabled if NitroNSM or NitroTPM evidence is enabled. **Note:** generic TPM PCR values are unattested (`TPM2_PCR_Read`) — they lack a hardware-signed quote. Integrity relies on the TEE's memory encryption protecting the OS. NitroNSM and NitroTPM PCRs are hardware-attested (embedded in the signed attestation document). A future revision may use `TPM2_Quote` for hardware-attested PCR values |
 | `ATTESTATION_SERVER_TPM_ALGORITHM` | `tpm.algorithm` | `sha384` | Hash algorithm for TPM PCR values: `sha1`/`sha256`/`sha384`/`sha512` (case-insensitive) |
-| `ATTESTATION_SERVER_REVOCATION_ENABLED` | `revocation.enabled` | `true` | Check TEE endorsement key CRLs; only fetches for enabled evidence types. SEV-SNP CRLs are fetched from AMD KDS in the background; TDX uses go-tdx-guest's built-in Intel PCS collateral fetching |
+| `ATTESTATION_SERVER_REVOCATION_ENABLED` | `revocation.enabled` | `true` | Check TEE endorsement key CRLs. SEV-SNP CRLs are fetched from AMD KDS in the background when local SEV-SNP evidence is enabled or dependencies are configured; TDX uses go-tdx-guest's built-in Intel PCS collateral fetching |
 | `ATTESTATION_SERVER_REVOCATION_REFRESH_INTERVAL` | `revocation.refresh_interval` | `12h` | How often to re-fetch CRLs in the background (SEV-SNP only; TDX checks are per-request via the library) |
 | `ATTESTATION_SERVER_RATELIMIT_ENABLED` | `ratelimit.enabled` | `false` | Rate-limit edge requests (those without client certificate / XFCC header) |
 | `ATTESTATION_SERVER_RATELIMIT_REQUESTS_PER_SECOND` | `ratelimit.requests_per_second` | `1` | Per-IP request rate for edge traffic |
@@ -287,9 +287,9 @@ Over-limit requests are **stalled** (blocked in a FIFO queue) up to `ratelimit.s
 
 ## Certificate revocation checking
 
-When `revocation.enabled` is true (the default), the server checks TEE endorsement key certificates against Certificate Revocation Lists. CRL fetching is conditional on the configured evidence types:
+When `revocation.enabled` is true (the default), the server checks TEE endorsement key certificates against Certificate Revocation Lists. CRL fetching is conditional on configuration:
 
-- **SEV-SNP**: A background goroutine fetches AMD KDS CRLs for all supported product lines (Milan, Genoa, Turin) at `revocation.refresh_interval` (default 12h). Both VCEK and VLEK CRLs are fetched. The `crlCache` stores parsed `x509.RevocationList` entries and checks endorsement key serial numbers during verification. Design is **fail-open**: if no CRL data is available yet (first fetch still pending or failed), certificates are accepted.
+- **SEV-SNP**: A background goroutine fetches AMD KDS CRLs for all supported product lines (Milan, Genoa, Turin) at `revocation.refresh_interval` (default 12h). Both VCEK and VLEK CRLs are fetched. CRLs are initialized when local SEV-SNP evidence is enabled **or** when dependency endpoints are configured (dependencies may include SEV-SNP evidence requiring revocation checks). The `crlCache` stores parsed `x509.RevocationList` entries and checks endorsement key serial numbers during verification. Design is **fail-open**: if no CRL data is available yet (first fetch still pending or failed), certificates are accepted.
 - **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching (`CheckRevocations: true, GetCollateral: true`). This happens per-request and adds network latency.
 - **Nitro**: No CRL mechanism exists (ephemeral certificate chains per attestation; revocation is handled by AWS at the hypervisor level).
 
