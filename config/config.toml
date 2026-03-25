@@ -69,8 +69,9 @@ size = "100MiB"  # max memory for shared HTTP fetch cache (endorsements + cosign
 endpoints = []
 
 [tls.public]
-cert_path = ""
-key_path  = ""
+cert_path   = ""
+key_path    = ""
+skip_verify = false  # skip system/Mozilla root CA chain verification
 
 [tls.private]
 cert_path = ""

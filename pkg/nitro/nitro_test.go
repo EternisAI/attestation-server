@@ -168,21 +168,16 @@ func TestNewAttestationData(t *testing.T) {
 	})
 }
 
-// nitroFixture is the JSON format for Nitro attestation test fixtures.
-// "time" is an RFC 3339 timestamp within the certificate validity window.
-// "report" is the exact attestation handler response containing "evidence"
-// (with the base64-encoded COSE_Sign1 blob) and "data" (the
-// AttestationReportData whose SHA-512 digest was used as the nonce).
+// nitroFixture is the raw AttestationReport JSON returned by the attestation
+// handler. The clock value for certificate validation is extracted from
+// data.timestamp (RFC 3339, truncated to seconds).
 type nitroFixture struct {
-	Time   string `json:"time"`
-	Report struct {
-		Evidence []struct {
-			Kind    string          `json:"kind"`
-			Blob    string          `json:"blob"`
-			RawData json.RawMessage `json:"data"`
-		} `json:"evidence"`
-		Data json.RawMessage `json:"data"`
-	} `json:"report"`
+	Evidence []struct {
+		Kind    string          `json:"kind"`
+		Blob    string          `json:"blob"`
+		RawData json.RawMessage `json:"data"`
+	} `json:"evidence"`
+	Data json.RawMessage `json:"data"`
 }
 
 func loadNitroFixture(t *testing.T, name string) *nitroFixture {
@@ -197,6 +192,22 @@ func loadNitroFixture(t *testing.T, name string) *nitroFixture {
 		t.Fatalf("parsing fixture %s: %v", path, err)
 	}
 	return &f
+}
+
+// fixtureTime extracts and parses the timestamp from the fixture's data JSON.
+func fixtureTime(t *testing.T, rawData json.RawMessage) time.Time {
+	t.Helper()
+	var ts struct {
+		Timestamp string `json:"timestamp"`
+	}
+	if err := json.Unmarshal(rawData, &ts); err != nil {
+		t.Fatalf("parsing data timestamp: %v", err)
+	}
+	now, err := time.Parse(time.RFC3339, ts.Timestamp)
+	if err != nil {
+		t.Fatalf("parsing timestamp %q: %v", ts.Timestamp, err)
+	}
+	return now
 }
 
 // deriveNonce compacts the fixture's raw data JSON (stripping whitespace
@@ -226,21 +237,17 @@ func TestVerifyEvidence(t *testing.T) {
 		t.Run(fx.name, func(t *testing.T) {
 			f := loadNitroFixture(t, fx.filename)
 
-			if len(f.Report.Evidence) == 0 {
+			if len(f.Evidence) == 0 {
 				t.Fatal("fixture has no evidence entries")
 			}
 
-			blob, err := base64.StdEncoding.DecodeString(f.Report.Evidence[0].Blob)
+			blob, err := base64.StdEncoding.DecodeString(f.Evidence[0].Blob)
 			if err != nil {
 				t.Fatalf("decoding blob: %v", err)
 			}
 
-			now, err := time.Parse(time.RFC3339Nano, f.Time)
-			if err != nil {
-				t.Fatalf("parsing time: %v", err)
-			}
-
-			nonce := deriveNonce(t, f.Report.Data)
+			now := fixtureTime(t, f.Data)
+			nonce := deriveNonce(t, f.Data)
 
 			t.Run("valid", func(t *testing.T) {
 				doc, err := VerifyEvidence(blob, nonce, now)
@@ -288,7 +295,7 @@ func TestVerifyEvidence(t *testing.T) {
 				if err != nil {
 					t.Fatalf("marshaling NewAttestationData: %v", err)
 				}
-				fixtureEvidenceData := f.Report.Evidence[0].RawData
+				fixtureEvidenceData := f.Evidence[0].RawData
 				if len(fixtureEvidenceData) > 0 {
 					var fixtureCompact, gotCompact bytes.Buffer
 					json.Compact(&fixtureCompact, fixtureEvidenceData)

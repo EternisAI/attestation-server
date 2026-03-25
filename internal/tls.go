@@ -28,12 +28,11 @@ import (
 // replacement via rename) into a single reload.
 const certReloadDebounce = 500 * time.Millisecond
 
-// certBundle holds a loaded TLS certificate along with precomputed SHA-256
-// fingerprints of the leaf certificate and its SPKI public key.
+// certBundle holds a loaded TLS certificate along with a precomputed SHA-256
+// fingerprint of the leaf certificate (hex-encoded).
 type certBundle struct {
-	cert              *tls.Certificate
-	certFingerprint   string
-	pubKeyFingerprint string
+	cert            *tls.Certificate
+	certFingerprint string
 }
 
 // tlsCertificates holds the current public and private certificate bundles
@@ -97,27 +96,14 @@ func certKeyType(cert *tls.Certificate) string {
 	}
 }
 
-// computeFingerprints returns SHA-256 hex-encoded fingerprints of the leaf
-// certificate DER and its SPKI (SubjectPublicKeyInfo) DER.
-func computeFingerprints(cert *tls.Certificate) (certFP, pubKeyFP string, err error) {
+// computeFingerprint returns the SHA-256 hex-encoded fingerprint of the
+// leaf certificate DER.
+func computeFingerprint(cert *tls.Certificate) (string, error) {
 	if len(cert.Certificate) == 0 {
-		return "", "", fmt.Errorf("certificate has no DER data")
+		return "", fmt.Errorf("certificate has no DER data")
 	}
-	certHash := sha256.Sum256(cert.Certificate[0])
-	certFP = hex.EncodeToString(certHash[:])
-
-	leaf, err := x509.ParseCertificate(cert.Certificate[0])
-	if err != nil {
-		return "", "", fmt.Errorf("parsing leaf certificate: %w", err)
-	}
-	spkiDER, err := x509.MarshalPKIXPublicKey(leaf.PublicKey)
-	if err != nil {
-		return "", "", fmt.Errorf("marshalling public key: %w", err)
-	}
-	pkHash := sha256.Sum256(spkiDER)
-	pubKeyFP = hex.EncodeToString(pkHash[:])
-
-	return certFP, pubKeyFP, nil
+	h := sha256.Sum256(cert.Certificate[0])
+	return hex.EncodeToString(h[:]), nil
 }
 
 // certLeafAttrs returns slog attributes describing the leaf certificate
@@ -136,7 +122,6 @@ func certLeafAttrs(b *certBundle) []slog.Attr {
 		slog.Time("not_before", leaf.NotBefore),
 		slog.Time("not_after", leaf.NotAfter),
 		slog.String("cert_fingerprint", b.certFingerprint),
-		slog.String("pubkey_fingerprint", b.pubKeyFingerprint),
 	}
 }
 
@@ -240,6 +225,39 @@ func verifyCertAgainstCA(cert *tls.Certificate, bundle *caBundle) error {
 	return nil
 }
 
+// verifyPublicCert verifies that a public TLS certificate chains to the
+// system/Mozilla root CA pool. This catches misconfigured certificates
+// at load time rather than at first client connection.
+func verifyPublicCert(cert *tls.Certificate) error {
+	if len(cert.Certificate) == 0 {
+		return fmt.Errorf("certificate has no DER data")
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return fmt.Errorf("parsing leaf certificate: %w", err)
+	}
+	intermediates := x509.NewCertPool()
+	for _, derBytes := range cert.Certificate[1:] {
+		ic, err := x509.ParseCertificate(derBytes)
+		if err != nil {
+			return fmt.Errorf("parsing intermediate certificate: %w", err)
+		}
+		intermediates.AddCert(ic)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return fmt.Errorf("loading system root CAs: %w", err)
+	}
+	_, err = leaf.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+	})
+	if err != nil {
+		return fmt.Errorf("certificate does not chain to system/Mozilla root CAs: %w", err)
+	}
+	return nil
+}
+
 // loadCertificates loads the initial public and/or private TLS certificates
 // from disk, validates key types, computes fingerprints, optionally verifies
 // the private cert against a CA bundle, and stores them in the server's
@@ -255,11 +273,16 @@ func (s *Server) loadCertificates() error {
 		default:
 			return fmt.Errorf("public TLS key must be ECDSA or RSA, got %T", cert.PrivateKey)
 		}
-		certFP, pkFP, err := computeFingerprints(&cert)
-		if err != nil {
-			return fmt.Errorf("computing public certificate fingerprints: %w", err)
+		if !s.cfg.PublicTLSSkipVerify {
+			if err := verifyPublicCert(&cert); err != nil {
+				return fmt.Errorf("public TLS certificate verification: %w", err)
+			}
 		}
-		b := &certBundle{cert: &cert, certFingerprint: certFP, pubKeyFingerprint: pkFP}
+		certFP, err := computeFingerprint(&cert)
+		if err != nil {
+			return fmt.Errorf("computing public certificate fingerprint: %w", err)
+		}
+		b := &certBundle{cert: &cert, certFingerprint: certFP}
 		s.certs.mu.Lock()
 		s.certs.public = b
 		s.certs.mu.Unlock()
@@ -292,11 +315,11 @@ func (s *Server) loadCertificates() error {
 			return fmt.Errorf("private TLS certificate CA verification: %w", err)
 		}
 		s.logger.Debug("verified private TLS certificate against CA bundle", "ca", s.cfg.PrivateTLSCAPath)
-		certFP, pkFP, err := computeFingerprints(&cert)
+		certFP, err := computeFingerprint(&cert)
 		if err != nil {
-			return fmt.Errorf("computing private certificate fingerprints: %w", err)
+			return fmt.Errorf("computing private certificate fingerprint: %w", err)
 		}
-		b := &certBundle{cert: &cert, certFingerprint: certFP, pubKeyFingerprint: pkFP}
+		b := &certBundle{cert: &cert, certFingerprint: certFP}
 		s.certs.mu.Lock()
 		s.certs.private = b
 		s.certs.privateCA = cab
@@ -389,12 +412,18 @@ func (s *Server) reloadPublicCert() {
 		s.logger.Error("reloaded public TLS key has unsupported type", "type", fmt.Sprintf("%T", cert.PrivateKey))
 		return
 	}
-	certFP, pkFP, err := computeFingerprints(&cert)
+	if !s.cfg.PublicTLSSkipVerify {
+		if err := verifyPublicCert(&cert); err != nil {
+			s.logger.Error("reloaded public TLS certificate does not chain to system/Mozilla root CAs", "error", err)
+			return
+		}
+	}
+	certFP, err := computeFingerprint(&cert)
 	if err != nil {
-		s.logger.Error("failed to compute public certificate fingerprints", "error", err)
+		s.logger.Error("failed to compute public certificate fingerprint", "error", err)
 		return
 	}
-	b := &certBundle{cert: &cert, certFingerprint: certFP, pubKeyFingerprint: pkFP}
+	b := &certBundle{cert: &cert, certFingerprint: certFP}
 	s.certs.mu.Lock()
 	s.certs.public = b
 	s.certs.mu.Unlock()
@@ -426,12 +455,12 @@ func (s *Server) reloadPrivateCert() {
 		s.logger.Error("reloaded private TLS certificate does not chain to CA", "error", err)
 		return
 	}
-	certFP, pkFP, err := computeFingerprints(&cert)
+	certFP, err := computeFingerprint(&cert)
 	if err != nil {
-		s.logger.Error("failed to compute private certificate fingerprints", "error", err)
+		s.logger.Error("failed to compute private certificate fingerprint", "error", err)
 		return
 	}
-	b := &certBundle{cert: &cert, certFingerprint: certFP, pubKeyFingerprint: pkFP}
+	b := &certBundle{cert: &cert, certFingerprint: certFP}
 	s.certs.mu.Lock()
 	s.certs.private = b
 	s.certs.privateCA = cab

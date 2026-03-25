@@ -33,6 +33,7 @@ type Config struct {
 	EndorsementsPath          string
 	PublicTLSCertPath         string
 	PublicTLSKeyPath          string
+	PublicTLSSkipVerify       bool
 	PrivateTLSCertPath        string
 	PrivateTLSKeyPath         string
 	PrivateTLSCAPath          string
@@ -151,6 +152,7 @@ func LoadConfig() (*Config, error) {
 		EndorsementsPath:          viper.GetString("paths.endorsements"),
 		PublicTLSCertPath:         absPath(viper.GetString("tls.public.cert_path")),
 		PublicTLSKeyPath:          absPath(viper.GetString("tls.public.key_path")),
+		PublicTLSSkipVerify:       viper.GetBool("tls.public.skip_verify"),
 		PrivateTLSCertPath:        absPath(viper.GetString("tls.private.cert_path")),
 		PrivateTLSKeyPath:         absPath(viper.GetString("tls.private.key_path")),
 		PrivateTLSCAPath:          absPath(viper.GetString("tls.private.ca_path")),

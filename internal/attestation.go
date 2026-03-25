@@ -15,6 +15,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/eternisai/attestation-server/pkg/hexbytes"
 	"github.com/eternisai/attestation-server/pkg/nitro"
 	"github.com/eternisai/attestation-server/pkg/sevsnp"
 	"github.com/eternisai/attestation-server/pkg/tdx"
@@ -91,16 +92,10 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	tlsData := &TLSReportData{}
 	s.certs.mu.RLock()
 	if s.certs.public != nil {
-		tlsData.Public = &TLSCertificateData{
-			CertificateFingerprint: s.certs.public.certFingerprint,
-			PublicKeyFingerprint:   s.certs.public.pubKeyFingerprint,
-		}
+		tlsData.Public = fingerprintBytes(s.certs.public.certFingerprint)
 	}
 	if s.certs.private != nil {
-		tlsData.Private = &TLSCertificateData{
-			CertificateFingerprint: s.certs.private.certFingerprint,
-			PublicKeyFingerprint:   s.certs.private.pubKeyFingerprint,
-		}
+		tlsData.Private = fingerprintBytes(s.certs.private.certFingerprint)
 	}
 	s.certs.mu.RUnlock()
 
@@ -113,9 +108,7 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "multiple client certificate entries not supported")
 		}
 		if fp := extractXFCCHash(xfcc); fp != "" {
-			tlsData.Client = &TLSCertificateData{
-				CertificateFingerprint: fp,
-			}
+			tlsData.Client = fingerprintBytes(fp)
 		}
 	}
 
@@ -139,12 +132,13 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 	// mTLS within the dependency chain. The public certificate covers
 	// external clients at the Internet-facing ingress. At least one must
 	// be present; otherwise the response cannot be trusted as e2e encrypted.
-	if tlsData.Client == nil && tlsData.Public == nil {
+	if len(tlsData.Client) == 0 && len(tlsData.Public) == 0 {
 		s.logger.Error("attestation request has neither client certificate (XFCC) nor public certificate, cannot prove end-to-end encryption", "request_id", requestID)
 		return fiber.NewError(fiber.StatusBadRequest, "end-to-end encryption proof required: provide a client certificate or configure a public certificate")
 	}
 
 	reportData := &AttestationReportData{
+		Timestamp:    NewTimestamp(),
 		RequestID:    requestID,
 		Nonce:        nonce,
 		BuildInfo:    s.buildInfo,
@@ -359,4 +353,12 @@ func isValidHexFingerprint(s string) bool {
 	}
 	_, err := hex.DecodeString(s)
 	return err == nil
+}
+
+// fingerprintBytes decodes a known-valid hex fingerprint string to raw bytes.
+// The input must be validated before calling (e.g. from computeFingerprint
+// or isValidHexFingerprint).
+func fingerprintBytes(hexFP string) hexbytes.Bytes {
+	b, _ := hex.DecodeString(hexFP)
+	return b
 }

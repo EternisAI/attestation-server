@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-json"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
@@ -94,6 +95,7 @@ type AttestationEvidence struct {
 // attestation nonce via SHA-512 hashing. A verifier can recompute the hash
 // from these fields and check it against the nonce inside the evidence blob.
 type AttestationReportData struct {
+	Timestamp    string         `json:"timestamp"`
 	RequestID    string         `json:"request_id"`
 	Nonce        string         `json:"nonce,omitempty"`
 	BuildInfo    *BuildInfo     `json:"build_info"`
@@ -104,6 +106,12 @@ type AttestationReportData struct {
 	TPMData      *TPMData       `json:"tpm,omitempty"`
 }
 
+// NewTimestamp returns the current time formatted as an RFC 3339 string
+// truncated to seconds, suitable for use in AttestationReportData.Timestamp.
+func NewTimestamp() string {
+	return time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+}
+
 // TPMData holds TPM PCR values along with the hash algorithm used.
 // The structure mirrors the Nitro attestation document's PCR format.
 type TPMData struct {
@@ -111,19 +119,13 @@ type TPMData struct {
 	PCRs   map[int]hexbytes.Bytes `json:"pcrs"`
 }
 
-// TLSReportData groups TLS certificate fingerprints for the server's public
-// and private certificates as well as the client certificate (from XFCC header).
+// TLSReportData holds SHA-256 certificate fingerprints for the server's
+// public and private certificates as well as the client certificate (from
+// XFCC header). Each field is the raw fingerprint bytes, hex-encoded in JSON.
 type TLSReportData struct {
-	Client  *TLSCertificateData `json:"client,omitempty"`
-	Public  *TLSCertificateData `json:"public,omitempty"`
-	Private *TLSCertificateData `json:"private,omitempty"`
-}
-
-// TLSCertificateData holds SHA-256 hex-encoded fingerprints of a certificate
-// and its public key (SPKI DER).
-type TLSCertificateData struct {
-	CertificateFingerprint string `json:"certificate"`
-	PublicKeyFingerprint   string `json:"public_key,omitempty"`
+	Client  hexbytes.Bytes `json:"client,omitempty"`
+	Public  hexbytes.Bytes `json:"public,omitempty"`
+	Private hexbytes.Bytes `json:"private,omitempty"`
 }
 
 // EndorsementDocument holds golden measurement values keyed by evidence type.

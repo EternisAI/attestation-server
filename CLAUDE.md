@@ -121,8 +121,9 @@ size = "100MiB"
 endpoints = []
 
 [tls.public]
-cert_path = ""
-key_path  = ""
+cert_path   = ""
+key_path    = ""
+skip_verify = false
 
 [tls.private]
 cert_path = ""
@@ -155,6 +156,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_PATHS_ENDORSEMENTS` | `paths.endorsements` | `/etc/endorsements.json` | Path to endorsements URL list file |
 | `ATTESTATION_SERVER_TLS_PUBLIC_CERT_PATH` | `tls.public.cert_path` | — | Path to public TLS certificate (PEM) |
 | `ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH` | `tls.public.key_path` | — | Path to public TLS private key (PEM) |
+| `ATTESTATION_SERVER_TLS_PUBLIC_SKIP_VERIFY` | `tls.public.skip_verify` | `false` | Skip system/Mozilla root CA chain verification for the public certificate |
 | `ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH` | `tls.private.cert_path` | — | **Required.** Path to private TLS certificate (PEM) |
 | `ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH` | `tls.private.key_path` | — | **Required.** Path to private TLS private key (PEM) |
 | `ATTESTATION_SERVER_TLS_PRIVATE_CA_PATH` | `tls.private.ca_path` | — | **Required.** PEM CA bundle — all private certs in the dependency chain must be issued by this CA |
@@ -250,15 +252,15 @@ When `dependencies.endpoints` is configured, the attestation handler fetches and
 
 Each dependency response is parsed as an `AttestationReport`, verified (nonce binding + cryptographic evidence verification for all known TEE types including NitroTPM→SEV-SNP chaining), and embedded as `json.RawMessage` in the `dependencies` field. Raw bytes are stored instead of re-marshaled structs to avoid `goccy/go-json` zero-copy string issues.
 
-After cryptographic verification, the client certificate fingerprint check enforces end-to-end encryption: the dependency's `data.tls.client.certificate` must be present and match the SHA-256 fingerprint of our private certificate (which is used as the client cert for outgoing mTLS connections). If missing or mismatched, a descriptive error is logged and an opaque error is returned to the caller.
+After cryptographic verification, the client certificate fingerprint check enforces end-to-end encryption: the dependency's `data.tls.client` must be present and match the SHA-256 fingerprint of our private certificate (which is used as the client cert for outgoing mTLS connections). If missing or mismatched, a descriptive error is logged and an opaque error is returned to the caller.
 
 The dependency HTTP client verifies server certificates against the private CA bundle (`tls.private.ca_path`) and presents the private certificate as the TLS client cert. All private certificates in the dependency chain must be issued by the same CA — Envoy only populates the XFCC header (which provides the client cert fingerprint) when the client cert passes CA verification.
 
 ### End-to-end encryption proof
 
 Every attestation response must prove end-to-end encryption via at least one of:
-- `data.tls.client.certificate` — XFCC-forwarded client cert fingerprint (service-to-service mTLS within the dependency chain)
-- `data.tls.public` — public certificate (external Internet clients at the first ingress hop, without client certificates)
+- `data.tls.client` — XFCC-forwarded client cert fingerprint (service-to-service mTLS within the dependency chain)
+- `data.tls.public` — public certificate fingerprint (external Internet clients at the first ingress hop, without client certificates)
 
 If neither is present, the handler returns 400. This ensures the attestation evidence is always bound to a TLS channel that the verifier can reason about.
 
@@ -393,19 +395,16 @@ DNSSEC_LIVE_TEST=1 go test ./pkg/dnssec/ -run TestLive -v
 
 ### Attestation verification fixtures
 
-Each TEE package has a `testdata/` directory with JSON fixtures captured from real hardware. All fixtures use the same format — the attestation handler's full response wrapped with a timestamp from within the certificate validity window:
+Each TEE package has a `testdata/` directory with JSON fixtures captured from real hardware. All fixtures are the raw `AttestationReport` JSON as returned by the attestation handler (pretty-printed):
 
 ```json
 {
-  "time": "RFC 3339 timestamp",
-  "report": {
-    "evidence": [{"kind": "...", "blob": "base64...", "data": {...}}],
-    "data": { ... AttestationReportData ... }
-  }
+  "evidence": [{"kind": "...", "blob": "base64...", "data": {...}}],
+  "data": { ... AttestationReportData ... }
 }
 ```
 
-The nonce/report_data is derived as `SHA-512(compact(report.data))`. Each verification test also cross-checks that `NewAttestationData` produces JSON matching the fixture's `evidence[0].data`.
+The clock value for certificate validation is extracted from `data.timestamp` (RFC 3339, truncated to seconds). The nonce/report_data is derived as `SHA-512(compact(data))`. Each verification test also cross-checks that `NewAttestationData` produces JSON matching the fixture's `evidence[0].data`.
 
 Chained (composite) attestation fixtures contain multiple evidence entries. For NitroTPM+SEV-SNP, the SEV-SNP report_data is `SHA-512(nitroTPMBlob)` instead of the raw digest, binding both proofs to the same request. The chained test in `internal/attestation_test.go` verifies both links and confirms the chain breaks if the unchained digest is used.
 
@@ -416,7 +415,7 @@ Fixture files:
 - `pkg/sevsnp/testdata/sevsnp_attestation_gcp.json`
 - `pkg/tdx/testdata/tdx_attestation.json`
 - `internal/testdata/nitrotpm_sevsnp_attestation.json` (chained NitroTPM → SEV-SNP)
-- `internal/testdata/dependencies_attestation.json` (diamond dependency graph: A → {B, C}, B → C with NitroTPM+SEV-SNP, TDX, and SEV-SNP evidence across services; top-level has public cert at ingress with no client cert, each dependency has client cert matching caller's private cert)
+- `internal/testdata/dependencies_attestation.json` (diamond dependency graph: A → {B, C}, B → C with NitroTPM+SEV-SNP, TDX, and SEV-SNP evidence across services; each dependency has client cert matching caller's private cert)
 
 ## Nix build
 

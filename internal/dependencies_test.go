@@ -36,9 +36,7 @@ func makeReportJSONWithClientCert(t *testing.T, nonceHex string, evidence []*Att
 	}
 	if clientCertFP != "" {
 		reportData.TLS = &TLSReportData{
-			Client: &TLSCertificateData{
-				CertificateFingerprint: clientCertFP,
-			},
+			Client: fingerprintBytes(clientCertFP),
 		}
 	}
 	dataJSON, err := json.Marshal(reportData)
@@ -65,9 +63,7 @@ func reportDataWithClientCert(nonce string) *AttestationReportData {
 	return &AttestationReportData{
 		Nonce: nonce,
 		TLS: &TLSReportData{
-			Client: &TLSCertificateData{
-				CertificateFingerprint: testClientFP,
-			},
+			Client: fingerprintBytes(testClientFP),
 		},
 	}
 }
@@ -186,9 +182,7 @@ func TestVerifyDependencyReport_ClientCertMismatch(t *testing.T) {
 	reportData := &AttestationReportData{
 		Nonce: "aabb",
 		TLS: &TLSReportData{
-			Client: &TLSCertificateData{
-				CertificateFingerprint: "aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222",
-			},
+			Client: fingerprintBytes("aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222"),
 		},
 	}
 	dataJSON, _ := json.Marshal(reportData)
@@ -220,11 +214,11 @@ func testServer(t *testing.T, cfg *Config, ctx context.Context) *Server {
 		instanceID: "test-instance-id",
 	}
 	cert := generateTestCertECDSA(t)
-	certFP, pkFP, err := computeFingerprints(&cert)
+	certFP, err := computeFingerprint(&cert)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.certs.private = &certBundle{cert: &cert, certFingerprint: certFP, pubKeyFingerprint: pkFP}
+	s.certs.private = &certBundle{cert: &cert, certFingerprint: certFP}
 	return s
 }
 

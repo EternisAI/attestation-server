@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha512"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -315,12 +316,12 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 	// Without this, the connection may have been intercepted by a proxy that
 	// strips or replaces the client cert, breaking the end-to-end encryption
 	// guarantee bound to the TEE attestation.
-	if reportData.TLS == nil || reportData.TLS.Client == nil || reportData.TLS.Client.CertificateFingerprint == "" {
+	if reportData.TLS == nil || len(reportData.TLS.Client) == 0 {
 		return nil, &errE2E{msg: "dependency response missing client certificate fingerprint in attestation data"}
 	}
-	if reportData.TLS.Client.CertificateFingerprint != clientCertFP {
+	if hex.EncodeToString(reportData.TLS.Client) != clientCertFP {
 		return nil, &errE2E{msg: fmt.Sprintf("client certificate fingerprint mismatch: expected %s, got %s",
-			clientCertFP, reportData.TLS.Client.CertificateFingerprint)}
+			clientCertFP, hex.EncodeToString(reportData.TLS.Client))}
 	}
 
 	// Compact the data JSON before hashing. The attestation handler

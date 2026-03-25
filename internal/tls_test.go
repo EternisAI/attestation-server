@@ -200,60 +200,37 @@ func TestCertKeyType(t *testing.T) {
 	})
 }
 
-func TestComputeFingerprints(t *testing.T) {
+func TestComputeFingerprint(t *testing.T) {
 	t.Run("valid ECDSA cert", func(t *testing.T) {
 		cert := generateTestCertECDSA(t)
-		certFP, pubKeyFP, err := computeFingerprints(&cert)
+		certFP, err := computeFingerprint(&cert)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(certFP) != 64 {
 			t.Errorf("expected cert fingerprint of length 64, got %d", len(certFP))
 		}
-		if len(pubKeyFP) != 64 {
-			t.Errorf("expected pubkey fingerprint of length 64, got %d", len(pubKeyFP))
-		}
-		// Fingerprints should be valid hex
 		for _, c := range certFP {
 			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
 				t.Fatalf("cert fingerprint contains non-hex char: %c", c)
-			}
-		}
-		for _, c := range pubKeyFP {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-				t.Fatalf("pubkey fingerprint contains non-hex char: %c", c)
 			}
 		}
 	})
 
 	t.Run("valid RSA cert", func(t *testing.T) {
 		cert := generateTestCertRSA(t)
-		certFP, pubKeyFP, err := computeFingerprints(&cert)
+		certFP, err := computeFingerprint(&cert)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(certFP) != 64 {
 			t.Errorf("expected cert fingerprint of length 64, got %d", len(certFP))
 		}
-		if len(pubKeyFP) != 64 {
-			t.Errorf("expected pubkey fingerprint of length 64, got %d", len(pubKeyFP))
-		}
-	})
-
-	t.Run("cert and pubkey fingerprints differ", func(t *testing.T) {
-		cert := generateTestCertECDSA(t)
-		certFP, pubKeyFP, err := computeFingerprints(&cert)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if certFP == pubKeyFP {
-			t.Error("cert and pubkey fingerprints should differ")
-		}
 	})
 
 	t.Run("empty cert returns error", func(t *testing.T) {
 		cert := &tls.Certificate{}
-		_, _, err := computeFingerprints(cert)
+		_, err := computeFingerprint(cert)
 		if err == nil {
 			t.Error("expected error for empty certificate, got nil")
 		}

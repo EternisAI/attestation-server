@@ -198,17 +198,31 @@ func TestIsValidHexFingerprint(t *testing.T) {
 	}
 }
 
-// chainedFixture is the JSON format for chained attestation test fixtures.
+// chainedFixture is the raw AttestationReport JSON for chained attestation
+// test fixtures. The clock value is extracted from data.timestamp.
 type chainedFixture struct {
-	Time   string `json:"time"`
-	Report struct {
-		Evidence []struct {
-			Kind    string          `json:"kind"`
-			Blob    string          `json:"blob"`
-			RawData json.RawMessage `json:"data"`
-		} `json:"evidence"`
-		Data json.RawMessage `json:"data"`
-	} `json:"report"`
+	Evidence []struct {
+		Kind    string          `json:"kind"`
+		Blob    string          `json:"blob"`
+		RawData json.RawMessage `json:"data"`
+	} `json:"evidence"`
+	Data json.RawMessage `json:"data"`
+}
+
+// fixtureTime extracts and parses the timestamp from the fixture's data JSON.
+func fixtureTime(t *testing.T, rawData json.RawMessage) time.Time {
+	t.Helper()
+	var ts struct {
+		Timestamp string `json:"timestamp"`
+	}
+	if err := json.Unmarshal(rawData, &ts); err != nil {
+		t.Fatalf("parsing data timestamp: %v", err)
+	}
+	now, err := time.Parse(time.RFC3339, ts.Timestamp)
+	if err != nil {
+		t.Fatalf("parsing timestamp %q: %v", ts.Timestamp, err)
+	}
+	return now
 }
 
 // TestChainedAttestation_NitroTPM_SEVSNP verifies the chained attestation
@@ -227,8 +241,8 @@ func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 		t.Fatalf("parsing fixture: %v", err)
 	}
 
-	if len(f.Report.Evidence) < 2 {
-		t.Fatalf("fixture has %d evidence entries, want at least 2", len(f.Report.Evidence))
+	if len(f.Evidence) < 2 {
+		t.Fatalf("fixture has %d evidence entries, want at least 2", len(f.Evidence))
 	}
 
 	// Find NitroTPM and SEV-SNP evidence entries by kind.
@@ -237,12 +251,12 @@ func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 		Blob    string          `json:"blob"`
 		RawData json.RawMessage `json:"data"`
 	}
-	for i := range f.Report.Evidence {
-		switch f.Report.Evidence[i].Kind {
+	for i := range f.Evidence {
+		switch f.Evidence[i].Kind {
 		case "nitrotpm":
-			nitroTPMEntry = &f.Report.Evidence[i]
+			nitroTPMEntry = &f.Evidence[i]
 		case "sevsnp":
-			sevsnpEntry = &f.Report.Evidence[i]
+			sevsnpEntry = &f.Evidence[i]
 		}
 	}
 	if nitroTPMEntry == nil {
@@ -252,15 +266,12 @@ func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 		t.Fatal("fixture missing sevsnp evidence entry")
 	}
 
-	now, err := time.Parse(time.RFC3339Nano, f.Time)
-	if err != nil {
-		t.Fatalf("parsing time: %v", err)
-	}
+	now := fixtureTime(t, f.Data)
 
 	// Derive the nonce from report data, matching the handler's flow:
 	// digest = SHA-512(compact(reportDataJSON))
 	var buf bytes.Buffer
-	if err := json.Compact(&buf, f.Report.Data); err != nil {
+	if err := json.Compact(&buf, f.Data); err != nil {
 		t.Fatalf("compacting fixture data JSON: %v", err)
 	}
 	digest := sha512.Sum512(buf.Bytes())
@@ -348,19 +359,16 @@ func TestChainedAttestation_NitroTPM_SEVSNP(t *testing.T) {
 	})
 }
 
-// dependencyFixture mirrors the JSON format of the dependency attestation fixture.
-// It extends chainedFixture with a Dependencies field containing nested reports.
+// dependencyFixture is the raw AttestationReport JSON for dependency
+// attestation test fixtures. The clock value is extracted from data.timestamp.
 type dependencyFixture struct {
-	Time   string `json:"time"`
-	Report struct {
-		Evidence []struct {
-			Kind    string          `json:"kind"`
-			Blob    string          `json:"blob"`
-			RawData json.RawMessage `json:"data"`
-		} `json:"evidence"`
-		Data         json.RawMessage   `json:"data"`
-		Dependencies []json.RawMessage `json:"dependencies"`
-	} `json:"report"`
+	Evidence []struct {
+		Kind    string          `json:"kind"`
+		Blob    string          `json:"blob"`
+		RawData json.RawMessage `json:"data"`
+	} `json:"evidence"`
+	Data         json.RawMessage   `json:"data"`
+	Dependencies []json.RawMessage `json:"dependencies"`
 }
 
 // dependencyReport is used to parse each dependency's JSON.
@@ -407,14 +415,11 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		t.Fatalf("parsing fixture: %v", err)
 	}
 
-	now, err := time.Parse(time.RFC3339Nano, f.Time)
-	if err != nil {
-		t.Fatalf("parsing time: %v", err)
-	}
+	now := fixtureTime(t, f.Data)
 
 	// Compute top-level digest from report data.
 	var dataBuf bytes.Buffer
-	if err := json.Compact(&dataBuf, f.Report.Data); err != nil {
+	if err := json.Compact(&dataBuf, f.Data); err != nil {
 		t.Fatalf("compacting data JSON: %v", err)
 	}
 	digest := sha512.Sum512(dataBuf.Bytes())
@@ -428,9 +433,9 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 			Blob    string          `json:"blob"`
 			RawData json.RawMessage `json:"data"`
 		}
-		for i := range f.Report.Evidence {
-			if f.Report.Evidence[i].Kind == "nitrotpm" {
-				tpmEntry = &f.Report.Evidence[i]
+		for i := range f.Evidence {
+			if f.Evidence[i].Kind == "nitrotpm" {
+				tpmEntry = &f.Evidence[i]
 				break
 			}
 		}
@@ -465,12 +470,12 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 			Blob    string          `json:"blob"`
 			RawData json.RawMessage `json:"data"`
 		}
-		for i := range f.Report.Evidence {
-			switch f.Report.Evidence[i].Kind {
+		for i := range f.Evidence {
+			switch f.Evidence[i].Kind {
 			case "nitrotpm":
-				tpmEntry = &f.Report.Evidence[i]
+				tpmEntry = &f.Evidence[i]
 			case "sevsnp":
-				snpEntry = &f.Report.Evidence[i]
+				snpEntry = &f.Evidence[i]
 			}
 		}
 		if tpmEntry == nil || snpEntry == nil {
@@ -500,14 +505,14 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 
 	// --- Step 2: Verify each dependency's nonce binding and evidence ---
 
-	if len(f.Report.Dependencies) != 2 {
-		t.Fatalf("expected 2 dependencies, got %d", len(f.Report.Dependencies))
+	if len(f.Dependencies) != 2 {
+		t.Fatalf("expected 2 dependencies, got %d", len(f.Dependencies))
 	}
 
 	// Parse both dependencies.
 	var deps [2]dependencyReport
 	for i := 0; i < 2; i++ {
-		if err := json.Unmarshal(f.Report.Dependencies[i], &deps[i]); err != nil {
+		if err := json.Unmarshal(f.Dependencies[i], &deps[i]); err != nil {
 			t.Fatalf("parsing dependency[%d]: %v", i, err)
 		}
 	}
@@ -552,30 +557,27 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 
 	// Extract and validate top-level TLS data.
 	var topData AttestationReportData
-	if err := json.Unmarshal(f.Report.Data, &topData); err != nil {
+	if err := json.Unmarshal(f.Data, &topData); err != nil {
 		t.Fatalf("parsing top-level data: %v", err)
 	}
 
-	t.Run("top-level e2e: public cert at ingress, no client cert", func(t *testing.T) {
+	t.Run("top-level e2e: client cert present", func(t *testing.T) {
 		if topData.TLS == nil {
 			t.Fatal("top-level report missing TLS data")
 		}
-		if topData.TLS.Public == nil || topData.TLS.Public.CertificateFingerprint == "" {
-			t.Fatal("top-level report missing public certificate (ingress e2e)")
-		}
-		if topData.TLS.Client != nil {
-			t.Error("top-level report should not have client cert (external client at ingress)")
+		if len(topData.TLS.Client) == 0 {
+			t.Fatal("top-level report missing client certificate")
 		}
 	})
 
-	if topData.TLS == nil || topData.TLS.Private == nil {
+	if topData.TLS == nil || len(topData.TLS.Private) == 0 {
 		t.Fatal("top-level report missing TLS private cert data")
 	}
-	aPrivateFP := topData.TLS.Private.CertificateFingerprint
+	aPrivateFP := hex.EncodeToString(topData.TLS.Private)
 
 	t.Run("dependency[0] verifyDependencyReport", func(t *testing.T) {
 		var report AttestationReport
-		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
+		if err := json.Unmarshal(f.Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
 		if err := verifyDependencyReportOnly(&report, nonceHex, aPrivateFP, now); err != nil {
@@ -622,7 +624,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 
 	t.Run("dependency[1] verifyDependencyReport", func(t *testing.T) {
 		var report AttestationReport
-		if err := json.Unmarshal(f.Report.Dependencies[1], &report); err != nil {
+		if err := json.Unmarshal(f.Dependencies[1], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
 		if err := verifyDependencyReportOnly(&report, nonceHex, aPrivateFP, now); err != nil {
@@ -678,10 +680,10 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 	if err := json.Unmarshal(deps[0].Data, &bData); err != nil {
 		t.Fatalf("parsing dep[0] data: %v", err)
 	}
-	if bData.TLS == nil || bData.TLS.Private == nil {
+	if bData.TLS == nil || len(bData.TLS.Private) == 0 {
 		t.Fatal("dep[0] missing TLS private cert data")
 	}
-	bPrivateFP := bData.TLS.Private.CertificateFingerprint
+	bPrivateFP := hex.EncodeToString(bData.TLS.Private)
 
 	t.Run("transitive C via B verifyDependencyReport", func(t *testing.T) {
 		var bDataBuf bytes.Buffer
@@ -702,7 +704,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 
 	t.Run("dependency fails with wrong nonce", func(t *testing.T) {
 		var report AttestationReport
-		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
+		if err := json.Unmarshal(f.Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
 		// Nonce check fires before client cert check, so the fingerprint is irrelevant here.
@@ -732,7 +734,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 
 	t.Run("dependency[0] fails with wrong client cert FP", func(t *testing.T) {
 		var report AttestationReport
-		if err := json.Unmarshal(f.Report.Dependencies[0], &report); err != nil {
+		if err := json.Unmarshal(f.Dependencies[0], &report); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
 		wrongFP := "0000000000000000000000000000000000000000000000000000000000000000"
@@ -748,7 +750,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 	t.Run("dependency[0] fails with empty client cert FP", func(t *testing.T) {
 		// Tamper: replace the dependency's data to remove client cert.
 		var depReport AttestationReport
-		if err := json.Unmarshal(f.Report.Dependencies[0], &depReport); err != nil {
+		if err := json.Unmarshal(f.Dependencies[0], &depReport); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
 		var depData AttestationReportData
@@ -774,7 +776,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 		// cert check pass (we supply the tampered FP) but the crypto
 		// evidence was signed over the original data, so it must fail.
 		var depReport AttestationReport
-		if err := json.Unmarshal(f.Report.Dependencies[0], &depReport); err != nil {
+		if err := json.Unmarshal(f.Dependencies[0], &depReport); err != nil {
 			t.Fatalf("parsing dependency: %v", err)
 		}
 		var depData AttestationReportData
@@ -782,7 +784,7 @@ func TestDependencyAttestation_DiamondGraph(t *testing.T) {
 			t.Fatalf("parsing dep data: %v", err)
 		}
 		tamperedFP := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-		depData.TLS.Client.CertificateFingerprint = tamperedFP
+		depData.TLS.Client = fingerprintBytes(tamperedFP)
 		tamperedDataJSON, _ := json.Marshal(depData)
 		depReport.Data = json.RawMessage(tamperedDataJSON)
 
