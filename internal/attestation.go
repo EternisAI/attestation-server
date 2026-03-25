@@ -149,11 +149,19 @@ func (s *Server) handleAttestation(c *fiber.Ctx) error {
 		TPMData:      tpmData,
 	}
 
+	// Marshal with DisableHTMLEscape so hex-encoded fields (nonce, TLS
+	// fingerprints) are not mangled. The resulting JSON bytes are the
+	// authoritative input to the nonce digest — they are embedded verbatim
+	// in the response so verifiers can recompute the hash.
 	reportDataJSON, err := json.MarshalWithOption(reportData, json.DisableHTMLEscape())
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to marshal report data")
 	}
 
+	// The SHA-512 digest of reportDataJSON becomes the TEE nonce/report_data.
+	// This is the core trust binding: the hardware-signed evidence contains
+	// this digest, and a verifier can recompute it from the response's "data"
+	// field to prove the evidence was freshly generated for this exact request.
 	digest := sha512.Sum512(reportDataJSON)
 
 	// Fetch and verify dependency attestation reports in parallel.
@@ -347,6 +355,10 @@ func (s *Server) tdxVerifyOpt() tdx.VerifyOpt {
 	}
 }
 
+// isValidHexFingerprint checks that s is a non-empty hex string of at most
+// 128 characters (64 bytes). Used to validate untrusted XFCC header values
+// before storing them — rejects oversized or non-hex inputs to prevent
+// injection of arbitrary data into the attestation report.
 func isValidHexFingerprint(s string) bool {
 	if len(s) == 0 || len(s) > 128 {
 		return false

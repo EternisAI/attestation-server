@@ -53,6 +53,8 @@ KoZIzj0EAwIDSQAwRgIhAOW/5QkR+S9CiSDcNoowLuPRLsWGf/Yi7GSX94BgwTwg
 AiEA4J0lrHoMs+Xo5o/sX6O9QWxHRAvZUGOdRQ7cvqRXaqI=
 -----END CERTIFICATE-----`
 
+// intelSGXRootPool is the trust anchor for TDX quote verification.
+// Parsed once at init time from the embedded Intel SGX Root CA PEM.
 var intelSGXRootPool = func() *x509.CertPool {
 	block, _ := pem.Decode([]byte(intelSGXRootCAPEM))
 	cert, err := x509.ParseCertificate(block.Bytes)

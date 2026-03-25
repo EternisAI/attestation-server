@@ -36,6 +36,11 @@ func ReadPCRs(alg tpm2.TPMAlgID) (map[int]hexbytes.Bytes, error) {
 	// The TPM may return only a subset of requested PCRs per call due to
 	// response buffer limits (TPM2_PCR_Read spec, Part 3 §22.4). We loop,
 	// removing returned indices from the request set, until all 24 are read.
+	//
+	// Note: these are unattested TPM2_PCR_Read values — they lack a
+	// hardware-signed quote (TPM2_Quote). Integrity relies on the TEE's
+	// memory encryption protecting the OS. NitroNSM and NitroTPM PCRs
+	// are hardware-attested (embedded in the signed attestation document).
 	for len(remaining) > 0 {
 		sel := tpm2.TPMLPCRSelection{
 			PCRSelections: []tpm2.TPMSPCRSelection{

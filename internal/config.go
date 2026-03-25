@@ -237,6 +237,9 @@ func splitCommaValues(raw []string) []string {
 	return out
 }
 
+// absPath converts a path to absolute. Returns the original on error or
+// empty input. Used to normalize TLS cert paths for consistent directory
+// comparison in validateTLSConfig and fsnotify watchers.
 func absPath(p string) string {
 	if p == "" {
 		return ""

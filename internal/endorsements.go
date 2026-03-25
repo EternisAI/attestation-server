@@ -119,7 +119,9 @@ func (s *Server) resolveEndorsements(ctx context.Context, urls []*url.URL) (*End
 // resolveEndorsementsWithClient is the internal implementation that accepts
 // an optional HTTP client override (used in tests with httptest TLS servers).
 func (s *Server) resolveEndorsementsWithClient(ctx context.Context, urls []*url.URL, client *http.Client) (*EndorsementDocument, *cosignResult, error) {
-	// Fast path: check caches
+	// Fast path: serve from cache if both endorsement and (when cosign is
+	// enabled) signature are cached. Cache entries share the same TTL so
+	// they expire together; a partial miss falls through to re-fetch both.
 	if s.httpCache != nil {
 		if val, ok := s.httpCache.get(urls[0].String()); ok {
 			if doc, ok := val.(*EndorsementDocument); ok {
@@ -446,6 +448,8 @@ func validateTDXMeasurements(quote *pb.QuoteV4, endorsement *TDXEndorsement) err
 	return nil
 }
 
+// getRTMR safely extracts a Runtime Measurement Register value from the
+// TDX quote body by index, returning nil if the index is out of range.
 func getRTMR(body *pb.TDQuoteBody, idx int) []byte {
 	rtmrs := body.GetRtmrs()
 	if idx < len(rtmrs) {

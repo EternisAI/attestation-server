@@ -13,10 +13,14 @@ import (
 // instead of the default base64.
 type Bytes []byte
 
+// MarshalJSON encodes the byte slice as a JSON string containing
+// lowercase hexadecimal characters (e.g. "deadbeef").
 func (h Bytes) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + hex.EncodeToString(h) + `"`), nil
 }
 
+// UnmarshalJSON decodes a hex-encoded JSON string back into raw bytes.
+// An empty string unmarshals to nil (not an empty slice).
 func (h *Bytes) UnmarshalJSON(data []byte) error {
 	if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
 		return fmt.Errorf("hexbytes: expected JSON string")

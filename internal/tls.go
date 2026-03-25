@@ -85,6 +85,8 @@ func validateTLSConfig(cfg *Config) error {
 	return nil
 }
 
+// certKeyType returns a human-readable name for the certificate's private
+// key algorithm, used in structured logging.
 func certKeyType(cert *tls.Certificate) string {
 	switch cert.PrivateKey.(type) {
 	case *ecdsa.PrivateKey:
@@ -273,6 +275,10 @@ func (s *Server) loadCertificates() error {
 		default:
 			return fmt.Errorf("public TLS key must be ECDSA or RSA, got %T", cert.PrivateKey)
 		}
+		// Verify the public cert chains to a system/Mozilla root CA unless
+		// explicitly skipped. Skipping is intended for development or
+		// environments where the public cert is self-signed or issued by
+		// an internal CA not in the system trust store.
 		if !s.cfg.PublicTLSSkipVerify {
 			if err := verifyPublicCert(&cert); err != nil {
 				return fmt.Errorf("public TLS certificate verification: %w", err)

@@ -19,7 +19,9 @@ import (
 )
 
 // cosignResult holds extracted Fulcio certificate extensions from a
-// verified cosign bundle. Cached to avoid repeated Rekor online checks.
+// verified cosign bundle. Stored in the shared fetcherCache alongside
+// *EndorsementDocument values. Caching avoids repeated Rekor online
+// inclusion proof checks on subsequent requests within the TTL window.
 type cosignResult struct {
 	BuildSignerURI                  string
 	BuildSignerDigest               string
@@ -148,10 +150,12 @@ func (s *Server) verifyCosignBundle(bundleJSON, endorsementDocBytes []byte) (*co
 
 	digest := sha256.Sum256(endorsementDocBytes)
 
-	// WithoutIdentitiesUnsafe skips Fulcio certificate identity matching
-	// during signature verification. This is safe here because we perform
-	// our own strict OID-by-OID validation in validateCosignOIDs afterward,
-	// comparing every Fulcio extension against the server's BuildInfo.
+	// WithoutIdentitiesUnsafe skips the sigstore-go library's built-in
+	// Fulcio certificate identity matching (issuer + SAN regex). This is
+	// safe here because we perform our own strict OID-by-OID validation
+	// in validateCosignOIDs afterward, comparing every Fulcio extension
+	// against the server's BuildInfo. The library's matcher is too coarse
+	// for our needs — we check individual fields rather than patterns.
 	policy := verify.NewPolicy(
 		verify.WithArtifactDigest("sha256", digest[:]),
 		verify.WithoutIdentitiesUnsafe(),

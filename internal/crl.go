@@ -38,6 +38,8 @@ type crlCache struct {
 	logger  *slog.Logger
 }
 
+// newCRLCache creates an empty CRL cache. CRLs are populated asynchronously
+// by runCRLRefresh; until then, CheckRevocation is a no-op (fail-open).
 func newCRLCache(logger *slog.Logger) *crlCache {
 	return &crlCache{
 		entries: make(map[string]*crlEntry),
@@ -47,7 +49,13 @@ func newCRLCache(logger *slog.Logger) *crlCache {
 
 // CheckRevocation checks if a certificate's serial number appears in any
 // cached CRL. Returns nil if the certificate is not revoked or if no CRL
-// data is available yet (fail-open until first successful fetch).
+// data is available yet.
+//
+// Security: this is fail-open by design — if the background CRL fetch has
+// not completed yet (or all fetches failed), certificates are accepted.
+// This prevents CRL infrastructure outages from causing a total service
+// denial. The trade-off is that a revoked certificate may be accepted
+// during the initial fetch window or during a sustained CRL outage.
 func (c *crlCache) CheckRevocation(cert *x509.Certificate, now time.Time) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

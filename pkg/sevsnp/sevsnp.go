@@ -492,6 +492,8 @@ func NewAttestationData(report *spb.Report) *AttestationData {
 	}
 }
 
+// decomposeTCB splits a 64-bit TCB version (as stored in the SEV-SNP
+// report) into its constituent security patch level components.
 func decomposeTCB(v uint64) TCBParts {
 	parts := kds.DecomposeTCBVersion(kds.TCBVersion(v))
 	return TCBParts{

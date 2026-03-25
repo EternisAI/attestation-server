@@ -505,6 +505,10 @@ func (s *Server) accessLog() fiber.Handler {
 	}
 }
 
+// setupRoutes registers the attestation endpoint. Rate limiting, when
+// enabled, is chained as middleware on this endpoint only — it is scoped
+// to /api/v1/attestation because attestation involves blocking TEE
+// hardware operations. Future lightweight endpoints should not inherit it.
 func (s *Server) setupRoutes() {
 	handlers := []fiber.Handler{}
 	if s.rateLimitHandler != nil {

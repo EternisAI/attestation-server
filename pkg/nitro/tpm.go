@@ -14,6 +14,10 @@ import (
 	"github.com/hf/nsm/response"
 )
 
+// NitroTPM attestation uses a raw TPM2 protocol over /dev/tpm0 rather
+// than the go-tpm library because the NitroTPM vendor command
+// (tpmCCVendorNSM) and NV buffer-based request/response flow are
+// AWS-specific extensions not supported by the generic TPM2 API.
 const (
 	tpmDevicePath = "/dev/tpm0"
 
@@ -25,16 +29,18 @@ const (
 	tpmCCNVUndefineSpace uint32 = 0x00000122
 	tpmCCNVWrite         uint32 = 0x00000137
 	tpmCCNVRead          uint32 = 0x0000014E
-	tpmCCVendorNSM       uint32 = 0x20000001
+	tpmCCVendorNSM       uint32 = 0x20000001 // AWS NitroTPM-specific vendor command
 
 	// TPM2 well-known handles.
 	tpmRSPW    uint32 = 0x40000009 // password session handle
 	tpmRHOwner uint32 = 0x40000001
 
-	// NV index configuration.
+	// NV index and buffer configuration. The NV space is allocated per
+	// attestation request to hold the CBOR-encoded NSM request and
+	// response. 8 KiB is sufficient for typical attestation documents.
 	nvIndex      uint32 = 0x01000001
 	nvBufferSize uint16 = 8192
-	nvMaxChunk   int    = 1024
+	nvMaxChunk   int    = 1024 // TPM max NV buffer per read/write
 
 	// NV attributes (TPMA_NV).
 	// Bit positions per TCG TPM 2.0 Part 2 and tpm2-tss/tss2_tpm2_types.h.

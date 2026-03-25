@@ -63,8 +63,10 @@ func (fc *fetcherCache) get(url string) (any, bool) {
 	return fc.cache.Get(url)
 }
 
-// setGroup stores the same value under all URL keys. Cost is charged only
-// on the first key to avoid double-counting identical documents.
+// setGroup stores the same pointer under all URL keys (multiple endorsement
+// URLs resolve to the same document by design). Cost is charged only on the
+// first key — all keys reference the same underlying memory, so charging
+// each would over-count and prematurely evict entries.
 func (fc *fetcherCache) setGroup(urls []string, value any, rawSize int, ttl time.Duration) {
 	for i, u := range urls {
 		cost := int64(0)
@@ -208,6 +210,9 @@ func fetchWithRetry(ctx context.Context, client *http.Client, u *url.URL, logger
 	}
 }
 
+// fetchOnce performs a single HTTP GET and returns the response body and
+// headers. Non-200 status codes are treated as errors. The response body
+// is capped at fetchMaxResponseBytes.
 func fetchOnce(ctx context.Context, client *http.Client, u *url.URL) ([]byte, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {

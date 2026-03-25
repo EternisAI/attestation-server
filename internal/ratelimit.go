@@ -25,6 +25,8 @@ type rateLimiterMap struct {
 	burst   int
 }
 
+// newRateLimiterMap creates a rate limiter map that lazily allocates a
+// token-bucket limiter for each unique client IP.
 func newRateLimiterMap(rps float64, burst int) *rateLimiterMap {
 	return &rateLimiterMap{
 		rps:   rate.Limit(rps),

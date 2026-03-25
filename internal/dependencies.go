@@ -333,6 +333,11 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 	}
 	digest := sha512.Sum512(compactData.Bytes())
 
+	// Verify each evidence entry. Order matters for chained attestation:
+	// NitroTPM must be processed before SEV-SNP because the SEV-SNP
+	// report_data is SHA-512(nitroTPMBlob) when both are present, binding
+	// the two proofs to the same request. This relies on the evidence
+	// array being ordered the same way the handler emits it.
 	parsed := &parsedDependencyEvidence{}
 	var nitroTPMBlob []byte
 	for _, ev := range report.Evidence {
