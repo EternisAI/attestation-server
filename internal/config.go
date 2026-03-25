@@ -44,6 +44,7 @@ type Config struct {
 	EndorsementDNSSEC         bool
 	EndorsementAllowedDomains []string
 	EndorsementClientTimeout  time.Duration
+	HTTPAllowProxy            bool
 	HTTPCacheSize             int64
 	RevocationEnabled         bool
 	RevocationRefreshInterval time.Duration
@@ -167,6 +168,7 @@ func LoadConfig() (*Config, error) {
 		EndorsementDNSSEC:         viper.GetBool("endorsements.dnssec"),
 		EndorsementAllowedDomains: endorsementDomains,
 		EndorsementClientTimeout:  endorsementTimeout,
+		HTTPAllowProxy:            viper.GetBool("http.allow_proxy"),
 		HTTPCacheSize:             httpCacheSize,
 		CosignVerify:              viper.GetBool("endorsements.cosign.verify"),
 		CosignURLSuffix:           viper.GetString("endorsements.cosign.url_suffix"),

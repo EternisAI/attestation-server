@@ -112,6 +112,10 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 		}
 	}
 
+	if cfg.HTTPAllowProxy {
+		logger.Warn("http.allow_proxy is enabled, outbound HTTP clients will honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY environment variables")
+	}
+
 	if err := validateTLSConfig(cfg); err != nil {
 		return nil, fmt.Errorf("TLS configuration: %w", err)
 	}

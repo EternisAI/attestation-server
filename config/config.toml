@@ -55,6 +55,9 @@ tuf_cache_path = ""     # empty = in-memory only; set writable path for disk cac
 uri       = ""  # exact match override for BuildSignerURI OID (leave empty for BuildInfo match)
 uri_regex = ""  # regex match override for BuildSignerURI OID (ignored if uri is set)
 
+[http]
+allow_proxy = false  # honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars (off by default; needed in Nitro Enclaves with vsock-proxy)
+
 [http.cache]
 size = "100MiB"  # max memory for shared HTTP fetch cache (endorsements + cosign signatures)
 

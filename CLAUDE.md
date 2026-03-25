@@ -111,6 +111,9 @@ tuf_cache_path = ""
 uri       = ""
 uri_regex = ""
 
+[http]
+allow_proxy = false
+
 [http.cache]
 size = "100MiB"
 
@@ -179,6 +182,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_TUF_CACHE_PATH` | `endorsements.cosign.tuf_cache_path` | — | Writable directory for Sigstore TUF metadata cache. Empty = in-memory only (no disk writes; background refresh every 24h). Set a path for disk-cached TUF root that survives restarts |
 | `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI` | `endorsements.cosign.build_signer.uri` | — | Exact match override for BuildSignerURI Fulcio OID (takes precedence over `uri_regex`) |
 | `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI_REGEX` | `endorsements.cosign.build_signer.uri_regex` | — | Regex match override for BuildSignerURI Fulcio OID (ignored if `uri` is set) |
+| `ATTESTATION_SERVER_HTTP_ALLOW_PROXY` | `http.allow_proxy` | `false` | Honour `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars for the server's outbound HTTP clients (endorsement/cosign fetches, SEV-SNP CRL fetches, dependency requests). Off by default; required in environments like AWS Nitro Enclaves where a vsock-proxy is the only egress path. TDX collateral fetching (go-tdx-guest) always honours proxy env vars via `http.DefaultTransport` regardless of this setting |
 | `ATTESTATION_SERVER_HTTP_CACHE_SIZE` | `http.cache.size` | `100MiB` | Maximum memory for the shared HTTP fetch cache (endorsements + cosign signatures, ristretto) |
 
 List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS`) support comma-separated values: `VAR=a,b,c`. Spaces around commas are trimmed.
@@ -290,8 +294,8 @@ Over-limit requests are **stalled** (blocked in a FIFO queue) up to `ratelimit.s
 
 When `revocation.enabled` is true (the default), the server checks TEE endorsement key certificates against Certificate Revocation Lists. CRL fetching is conditional on configuration:
 
-- **SEV-SNP**: A background goroutine fetches AMD KDS CRLs for all supported product lines (Milan, Genoa, Turin) at `revocation.refresh_interval` (default 12h). Both VCEK and VLEK CRLs are fetched. CRLs are initialized when local SEV-SNP evidence is enabled **or** when dependency endpoints are configured (dependencies may include SEV-SNP evidence requiring revocation checks). The `crlCache` stores parsed `x509.RevocationList` entries and checks endorsement key serial numbers during verification. Design is **fail-open**: if no CRL data is available yet (first fetch still pending or failed), certificates are accepted.
-- **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching (`CheckRevocations: true, GetCollateral: true`). This happens per-request and adds network latency.
+- **SEV-SNP**: A background goroutine fetches AMD KDS CRLs for all supported product lines (Milan, Genoa, Turin) at `revocation.refresh_interval` (default 12h). Both VCEK and VLEK CRLs are fetched. CRLs are initialized when local SEV-SNP evidence is enabled **or** when dependency endpoints are configured (dependencies may include SEV-SNP evidence requiring revocation checks). The `crlCache` stores parsed `x509.RevocationList` entries and checks endorsement key serial numbers during verification. Design is **fail-open**: if no CRL data is available yet (first fetch still pending or failed), certificates are accepted. CRL fetches use the server's `fetchHTTPClient()` and honour `http.allow_proxy`.
+- **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching (`CheckRevocations: true, GetCollateral: true`). This happens per-request and adds network latency. The library uses `http.DefaultTransport` (via `trust.SimpleHTTPSGetter`) which always honours `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars regardless of the `http.allow_proxy` setting.
 - **Nitro**: No CRL mechanism exists (ephemeral certificate chains per attestation; revocation is handled by AWS at the hypervisor level).
 
 When disabled, a startup warning is logged: "certificate revocation checking is disabled, revoked TEE endorsement keys will be accepted".
