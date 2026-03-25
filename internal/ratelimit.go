@@ -40,6 +40,10 @@ func (m *rateLimiterMap) get(ip string) *rate.Limiter {
 		entry.lastSeen = now
 		return entry.limiter
 	}
+	// Fiber's c.Get() returns strings backed by fasthttp's reusable buffer
+	// (UnsafeString). Clone before storing as a map key to prevent silent
+	// corruption when the RequestCtx is recycled via sync.Pool.
+	ip = strings.Clone(ip)
 	entry := &rateLimiterEntry{
 		limiter:  rate.NewLimiter(m.rps, m.burst),
 		lastSeen: now,

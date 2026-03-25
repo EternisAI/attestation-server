@@ -195,6 +195,7 @@ List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `AT
 
 - All Go code must be `go fmt`-conformant. Always run `go fmt ./...` before committing.
 - Use `github.com/goccy/go-json` everywhere instead of `encoding/json`. The attestation handler marshals report data with `json.MarshalWithOption(..., json.DisableHTMLEscape())` for the nonce digest, then embeds those exact bytes (via `json.RawMessage`) in the response to guarantee byte-for-byte consistency.
+- **Fiber `UnsafeString` hazard**: Fiber's `c.Get()`, `c.Query()`, `c.IP()`, `c.Method()`, `c.Path()`, and similar methods return strings backed by fasthttp's reusable `RequestCtx` buffer (`UnsafeString`). These strings are only valid within the handler. If stored in a long-lived data structure (map key, struct field on the server, channel, etc.), the backing bytes are silently corrupted when fasthttp recycles the `RequestCtx` via `sync.Pool`. Use `strings.Clone()` before storing any Fiber context string beyond the handler lifetime. Operations that implicitly copy (JSON marshaling, string concatenation, `net/http.Header.Set`) are safe without cloning.
 
 ## TEE package public API
 
