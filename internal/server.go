@@ -123,6 +123,9 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	if err := s.loadCertificates(); err != nil {
 		return nil, err
 	}
+	if cfg.PrivateTLSCertPath == "" {
+		logger.Warn("running without private TLS certificate, dependency mTLS and XFCC client certificate proof are unavailable")
+	}
 
 	if cfg.EndorsementDNSSEC {
 		dr, drErr := dnssec.New(5 * time.Second)

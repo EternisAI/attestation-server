@@ -1,6 +1,6 @@
 # attestation-server
 
-A Go HTTP server for serving TEE (Trusted Execution Environment) attestation documents. The server runs behind an Envoy reverse proxy that terminates TLS — Envoy uses the private certificate for service-to-service mTLS (setting the XFCC header with the client cert hash) and optionally the public certificate for Internet-facing ingress without client certificates.
+A Go HTTP server for serving TEE (Trusted Execution Environment) attestation documents. The server runs behind an Envoy reverse proxy that terminates TLS — Envoy uses the private certificate for service-to-service mTLS (setting the XFCC header with the client cert hash) and optionally the public certificate for Internet-facing ingress without client certificates. The private certificate is only required when dependency endpoints are configured (mTLS for TEE-to-TEE communication) or when no public certificate is set; a TEE with only a public certificate can serve attestation reports to external clients without maintaining private TLS infrastructure.
 
 ## Tech stack
 
@@ -129,7 +129,7 @@ skip_verify = false
 [tls.private]
 cert_path = ""
 key_path  = ""
-ca_path   = ""  # required
+ca_path   = ""  # required when private cert is configured
 ```
 
 ### CLI flags
@@ -158,9 +158,9 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_TLS_PUBLIC_CERT_PATH` | `tls.public.cert_path` | — | Path to public TLS certificate (PEM) |
 | `ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH` | `tls.public.key_path` | — | Path to public TLS private key (PEM) |
 | `ATTESTATION_SERVER_TLS_PUBLIC_SKIP_VERIFY` | `tls.public.skip_verify` | `false` | Skip system/Mozilla root CA chain verification for the public certificate |
-| `ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH` | `tls.private.cert_path` | — | **Required.** Path to private TLS certificate (PEM) |
-| `ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH` | `tls.private.key_path` | — | **Required.** Path to private TLS private key (PEM) |
-| `ATTESTATION_SERVER_TLS_PRIVATE_CA_PATH` | `tls.private.ca_path` | — | **Required.** PEM CA bundle — all private certs in the dependency chain must be issued by this CA |
+| `ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH` | `tls.private.cert_path` | — | Path to private TLS certificate (PEM). Required when dependency endpoints are configured or no public certificate is set |
+| `ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH` | `tls.private.key_path` | — | Path to private TLS private key (PEM). Required when dependency endpoints are configured or no public certificate is set |
+| `ATTESTATION_SERVER_TLS_PRIVATE_CA_PATH` | `tls.private.ca_path` | — | PEM CA bundle — all private certs in the dependency chain must be issued by this CA. Required when private cert is configured |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_NITRONSM` | `report.evidence.nitronsm` | `false` | Enable Nitro NSM evidence (exclusive: cannot combine with others) |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_NITROTPM` | `report.evidence.nitrotpm` | `false` | Enable Nitro TPM evidence |
 | `ATTESTATION_SERVER_REPORT_EVIDENCE_SEVSNP` | `report.evidence.sevsnp` | `false` | Enable SEV-SNP evidence |
