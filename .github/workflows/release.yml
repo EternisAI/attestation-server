@@ -12,12 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@9a59e15a74545c99a626ba594edcd0d02189e670 # main at 2026-03-20T13:57:34Z
+        with:
+          summarize: false
 
       - name: Build Image
         run: |
