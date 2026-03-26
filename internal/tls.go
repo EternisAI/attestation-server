@@ -45,34 +45,58 @@ type tlsCertificates struct {
 	privateCA *caBundle
 }
 
-// validateTLSConfig checks that the private TLS certificate set is configured
-// (required for end-to-end encryption bound to TEE attestation) and that each
-// set has both cert and key paths in the same directory. The public certificate
-// set remains optional.
+// validateTLSConfig checks that at least one TLS certificate set is configured
+// and that each set has both cert and key paths in the same directory.
+//
+// The private TLS certificate (with its CA bundle) is required when dependency
+// endpoints are configured (mTLS is needed for TEE-to-TEE communication) or
+// when no public certificate is configured (the server needs at least one
+// certificate for end-to-end encryption proof). When a public certificate is
+// configured and there are no dependencies, the private certificate is optional
+// — the server can prove e2e encryption to Internet clients via the public
+// certificate alone.
 func validateTLSConfig(cfg *Config) error {
 	pubHasCert := cfg.PublicTLSCertPath != ""
 	pubHasKey := cfg.PublicTLSKeyPath != ""
 	privHasCert := cfg.PrivateTLSCertPath != ""
 	privHasKey := cfg.PrivateTLSKeyPath != ""
 
-	if !privHasCert || !privHasKey {
-		if privHasCert || privHasKey {
+	hasDeps := len(cfg.DependencyEndpoints) > 0
+	pubSet := pubHasCert || pubHasKey
+	privSet := privHasCert || privHasKey
+
+	// At least one certificate set must be configured.
+	if !pubSet && !privSet {
+		return fmt.Errorf("at least one TLS certificate (public or private) is required for end-to-end encryption proof")
+	}
+
+	// Private TLS is required when dependencies need mTLS or when there
+	// is no public certificate to prove e2e encryption.
+	privateRequired := hasDeps || !pubSet
+	if privateRequired && !privHasCert && !privHasKey {
+		if hasDeps {
+			return fmt.Errorf("private TLS certificate is required when dependency endpoints are configured (mTLS)")
+		}
+		return fmt.Errorf("private TLS certificate is required when no public certificate is configured")
+	}
+
+	// Validate private cert set (if partially or fully specified).
+	if privSet {
+		if !privHasCert || !privHasKey {
 			return fmt.Errorf("both private TLS cert and key paths must be specified")
 		}
-		return fmt.Errorf("private TLS certificate is required for attestation-bound end-to-end encryption")
-	}
-	if filepath.Dir(cfg.PrivateTLSCertPath) != filepath.Dir(cfg.PrivateTLSKeyPath) {
-		return fmt.Errorf("private TLS cert and key paths must be in the same directory")
-	}
-
-	if cfg.PrivateTLSCAPath == "" {
-		return fmt.Errorf("private TLS CA bundle is required (all private certificates in the dependency chain must be issued by the same CA)")
-	}
-	if filepath.Dir(cfg.PrivateTLSCAPath) != filepath.Dir(cfg.PrivateTLSCertPath) {
-		return fmt.Errorf("private TLS CA path must be in the same directory as cert and key")
+		if filepath.Dir(cfg.PrivateTLSCertPath) != filepath.Dir(cfg.PrivateTLSKeyPath) {
+			return fmt.Errorf("private TLS cert and key paths must be in the same directory")
+		}
+		if cfg.PrivateTLSCAPath == "" {
+			return fmt.Errorf("private TLS CA bundle is required (all private certificates in the dependency chain must be issued by the same CA)")
+		}
+		if filepath.Dir(cfg.PrivateTLSCAPath) != filepath.Dir(cfg.PrivateTLSCertPath) {
+			return fmt.Errorf("private TLS CA path must be in the same directory as cert and key")
+		}
 	}
 
-	pubSet := pubHasCert || pubHasKey
+	// Validate public cert set (if partially or fully specified).
 	if pubSet {
 		if !pubHasCert || !pubHasKey {
 			return fmt.Errorf("both public TLS cert and key paths must be specified")

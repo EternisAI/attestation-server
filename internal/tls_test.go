@@ -55,6 +55,8 @@ func generateTestCertRSA(t *testing.T) tls.Certificate {
 }
 
 func TestValidateTLSConfig(t *testing.T) {
+	depURL, _ := url.Parse("https://dep.example.com/api/v1/attestation")
+
 	tests := []struct {
 		name    string
 		cfg     Config
@@ -66,10 +68,19 @@ func TestValidateTLSConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "public only without private is rejected",
+			name: "public only without private, no dependencies",
 			cfg: Config{
 				PublicTLSCertPath: "/tmp/certs/cert.pem",
 				PublicTLSKeyPath:  "/tmp/certs/key.pem",
+			},
+			wantErr: false,
+		},
+		{
+			name: "public only with dependencies requires private",
+			cfg: Config{
+				PublicTLSCertPath:   "/tmp/certs/cert.pem",
+				PublicTLSKeyPath:    "/tmp/certs/key.pem",
+				DependencyEndpoints: []*url.URL{depURL},
 			},
 			wantErr: true,
 		},
@@ -155,6 +166,25 @@ func TestValidateTLSConfig(t *testing.T) {
 				PrivateTLSCertPath: "/tmp/private/cert.pem",
 				PrivateTLSKeyPath:  "/tmp/private/key.pem",
 				PrivateTLSCAPath:   "/tmp/other/ca.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "dependencies with private cert is valid",
+			cfg: Config{
+				PublicTLSCertPath:   "/tmp/public/cert.pem",
+				PublicTLSKeyPath:    "/tmp/public/key.pem",
+				PrivateTLSCertPath:  "/tmp/private/cert.pem",
+				PrivateTLSKeyPath:   "/tmp/private/key.pem",
+				PrivateTLSCAPath:    "/tmp/private/ca.pem",
+				DependencyEndpoints: []*url.URL{depURL},
+			},
+			wantErr: false,
+		},
+		{
+			name: "no public cert and no private cert with dependencies",
+			cfg: Config{
+				DependencyEndpoints: []*url.URL{depURL},
 			},
 			wantErr: true,
 		},

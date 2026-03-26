@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"crypto/sha512"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -82,7 +84,7 @@ func TestVerifyDependencyReport_NonceMismatch(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err = verifyDependencyReportOnly(report, "different-nonce", testClientFP, time.Now())
+	err = verifyDependencyReportOnly(report, "different-nonce", testClientFP, "", time.Now())
 	if err == nil {
 		t.Fatal("expected error for nonce mismatch, got nil")
 	}
@@ -99,7 +101,7 @@ func TestVerifyDependencyReport_EmptyEvidence(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReportOnly(report, "abc123", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "abc123", testClientFP, "", time.Now())
 	if err == nil {
 		t.Fatal("expected error for empty evidence, got nil")
 	}
@@ -116,7 +118,7 @@ func TestVerifyDependencyReport_NilEvidence(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReportOnly(report, "abc123", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "abc123", testClientFP, "", time.Now())
 	if err == nil {
 		t.Fatal("expected error for nil evidence, got nil")
 	}
@@ -134,7 +136,7 @@ func TestVerifyDependencyReport_UnknownEvidenceKind(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReportOnly(report, nonceHex, testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, nonceHex, testClientFP, "", time.Now())
 	if err == nil {
 		t.Fatal("expected error for unknown evidence kind, got nil")
 	}
@@ -149,7 +151,7 @@ func TestVerifyDependencyReport_InvalidDataJSON(t *testing.T) {
 		Data:     json.RawMessage(`not valid json`),
 	}
 
-	err := verifyDependencyReportOnly(report, "anything", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "anything", testClientFP, "", time.Now())
 	if err == nil {
 		t.Fatal("expected error for invalid data JSON, got nil")
 	}
@@ -166,7 +168,7 @@ func TestVerifyDependencyReport_MissingClientCert(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReportOnly(report, "aabb", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, "", time.Now())
 	if err == nil {
 		t.Fatal("expected error for missing client cert, got nil")
 	}
@@ -191,7 +193,7 @@ func TestVerifyDependencyReport_ClientCertMismatch(t *testing.T) {
 		Data:     json.RawMessage(dataJSON),
 	}
 
-	err := verifyDependencyReportOnly(report, "aabb", testClientFP, time.Now())
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, "", time.Now())
 	if err == nil {
 		t.Fatal("expected error for client cert mismatch, got nil")
 	}
@@ -200,6 +202,95 @@ func TestVerifyDependencyReport_ClientCertMismatch(t *testing.T) {
 	}
 	if !contains(err.Error(), "mismatch") {
 		t.Fatalf("error %q does not contain 'mismatch'", err.Error())
+	}
+}
+
+// testServerCertFP is a fake server cert fingerprint used in unit tests.
+const testServerCertFP = "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd"
+
+// makeTestReport builds an AttestationReport with the given TLS fingerprints
+// and a single fake evidence blob. clientFP and privateFP may be empty to
+// omit the corresponding TLS field.
+func makeTestReport(t *testing.T, nonceHex, clientFP, privateFP string) *AttestationReport {
+	t.Helper()
+	rd := &AttestationReportData{Nonce: nonceHex}
+	if clientFP != "" || privateFP != "" {
+		rd.TLS = &TLSReportData{}
+		if clientFP != "" {
+			rd.TLS.Client = fingerprintBytes(clientFP)
+		}
+		if privateFP != "" {
+			rd.TLS.Private = fingerprintBytes(privateFP)
+		}
+	}
+	dataJSON, err := json.Marshal(rd)
+	if err != nil {
+		t.Fatalf("marshaling report data: %v", err)
+	}
+	return &AttestationReport{
+		Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
+		Data:     json.RawMessage(dataJSON),
+	}
+}
+
+func TestVerifyDependencyReport_ServerCertSkippedWhenEmpty(t *testing.T) {
+	// When serverCertFP is empty, the check is skipped regardless of
+	// whether data.tls.private is present.
+	report := makeTestReport(t, "aabb", testClientFP, "")
+
+	// Should reach crypto verification (fail on fake blob), not e2e error.
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, "", time.Now())
+	if err == nil {
+		t.Fatal("expected error (crypto), got nil")
+	}
+	if isE2EError(err) {
+		t.Fatalf("expected crypto error, got e2e error: %v", err)
+	}
+}
+
+func TestVerifyDependencyReport_ServerCertMismatch(t *testing.T) {
+	report := makeTestReport(t, "aabb", testClientFP, "1111111111111111111111111111111111111111111111111111111111111111")
+
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, testServerCertFP, time.Now())
+	if err == nil {
+		t.Fatal("expected error for server cert mismatch, got nil")
+	}
+	if !isE2EError(err) {
+		t.Fatalf("expected e2e error, got: %v", err)
+	}
+	if !contains(err.Error(), "server certificate fingerprint mismatch") {
+		t.Fatalf("error %q does not contain 'server certificate fingerprint mismatch'", err.Error())
+	}
+}
+
+func TestVerifyDependencyReport_ServerCertMissing(t *testing.T) {
+	// data.tls.private is absent but serverCertFP is provided.
+	report := makeTestReport(t, "aabb", testClientFP, "")
+
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, testServerCertFP, time.Now())
+	if err == nil {
+		t.Fatal("expected error for missing server cert in report, got nil")
+	}
+	if !isE2EError(err) {
+		t.Fatalf("expected e2e error, got: %v", err)
+	}
+	if !contains(err.Error(), "missing private certificate") {
+		t.Fatalf("error %q does not contain 'missing private certificate'", err.Error())
+	}
+}
+
+func TestVerifyDependencyReport_ServerCertMatch(t *testing.T) {
+	// Server cert matches — should proceed to crypto verification (fail on
+	// fake blob), not stop at e2e.
+	report := makeTestReport(t, "aabb", testClientFP, testServerCertFP)
+
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, testServerCertFP, time.Now())
+	if err == nil {
+		t.Fatal("expected error (crypto), got nil")
+	}
+	// Should fail at crypto verification, not e2e.
+	if isE2EError(err) {
+		t.Fatalf("expected crypto error, got e2e error: %v", err)
 	}
 }
 
@@ -720,6 +811,10 @@ func TestUpstreamErrorCode(t *testing.T) {
 		{"timeout error", &errTimeout{err: fmt.Errorf("dial timeout")}, 504},
 		{"connection error", &errConnection{err: fmt.Errorf("connection refused")}, 503},
 		{"generic error", fmt.Errorf("something failed"), 500},
+		{"tls cert error", wrapUpstreamError(classifyNetError(
+			&url.Error{Op: "Get", URL: "https://dep:8443", Err: &tls.CertificateVerificationError{
+				Err: x509.CertificateInvalidError{Reason: x509.Expired},
+			}}), "dependency failed"), 500},
 		{"wrapped timeout", fmt.Errorf("outer: %w", &errTimeout{err: fmt.Errorf("inner timeout")}), 504},
 		{"wrapped connection", fmt.Errorf("outer: %w", &errConnection{err: fmt.Errorf("inner conn")}), 503},
 	}
@@ -753,6 +848,45 @@ func TestClassifyNetError(t *testing.T) {
 		var ce *errConnection
 		if !errors.As(err, &ce) {
 			t.Errorf("expected *errConnection, got %T", err)
+		}
+	})
+
+	t.Run("tls cert verification error is not classified as connection", func(t *testing.T) {
+		// Simulates the error chain: *url.Error wrapping *tls.CertificateVerificationError
+		// (e.g. expired cert). Should NOT become *errConnection.
+		tlsErr := &tls.CertificateVerificationError{
+			Err: x509.CertificateInvalidError{Reason: x509.Expired},
+		}
+		urlErr := &url.Error{Op: "Get", URL: "https://dep:8443", Err: tlsErr}
+		err := classifyNetError(urlErr)
+		var ce *errConnection
+		if errors.As(err, &ce) {
+			t.Error("TLS cert verification error should not be classified as *errConnection")
+		}
+		var te *errTimeout
+		if errors.As(err, &te) {
+			t.Error("TLS cert verification error should not be classified as *errTimeout")
+		}
+	})
+
+	t.Run("tls unknown authority error is not classified as connection", func(t *testing.T) {
+		tlsErr := &tls.CertificateVerificationError{
+			Err: x509.UnknownAuthorityError{},
+		}
+		urlErr := &url.Error{Op: "Get", URL: "https://dep:8443", Err: tlsErr}
+		err := classifyNetError(urlErr)
+		var ce *errConnection
+		if errors.As(err, &ce) {
+			t.Error("TLS unknown authority error should not be classified as *errConnection")
+		}
+	})
+
+	t.Run("url error without tls cert error is still connection", func(t *testing.T) {
+		// Non-TLS url.Error (e.g. connection refused) should still be *errConnection.
+		err := classifyNetError(&url.Error{Op: "Get", URL: "http://x", Err: fmt.Errorf("connection refused")})
+		var ce *errConnection
+		if !errors.As(err, &ce) {
+			t.Errorf("expected *errConnection for non-TLS url error, got %T", err)
 		}
 	})
 
