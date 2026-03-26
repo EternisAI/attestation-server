@@ -114,27 +114,25 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	endorsementTimeout, err := time.ParseDuration(viper.GetString("endorsements.client.timeout"))
+	endorsementTimeout, err := parseDuration("endorsements.client.timeout")
 	if err != nil {
-		endorsementTimeout = 10 * time.Second
+		return nil, err
 	}
 	httpCacheSize, err := parseByteSize(viper.GetString("http.cache.size"))
 	if err != nil {
-		httpCacheSize = 100 << 20
+		return nil, fmt.Errorf("http.cache.size: %w", err)
 	}
-	httpCacheDefaultTTL, err := time.ParseDuration(viper.GetString("http.cache.default_ttl"))
+	httpCacheDefaultTTL, err := parseDuration("http.cache.default_ttl")
 	if err != nil {
-		httpCacheDefaultTTL = time.Hour
+		return nil, err
 	}
-
-	revocationRefreshInterval, err := time.ParseDuration(viper.GetString("revocation.refresh_interval"))
+	revocationRefreshInterval, err := parseDuration("revocation.refresh_interval")
 	if err != nil {
-		revocationRefreshInterval = 12 * time.Hour
+		return nil, err
 	}
-
-	rateLimitStallTimeout, err := time.ParseDuration(viper.GetString("ratelimit.stall_timeout"))
+	rateLimitStallTimeout, err := parseDuration("ratelimit.stall_timeout")
 	if err != nil {
-		rateLimitStallTimeout = 10 * time.Second
+		return nil, err
 	}
 
 	cosignBuildSigner := CosignBuildSignerConfig{
@@ -312,6 +310,17 @@ func parseLogLevel(s string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// parseDuration reads a viper string key and parses it as a time.Duration.
+// Returns an error if the value is non-empty and unparseable.
+func parseDuration(key string) (time.Duration, error) {
+	s := viper.GetString(key)
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q: %w", key, s, err)
+	}
+	return d, nil
 }
 
 // parseByteSize parses a human-readable byte size string into a byte count
