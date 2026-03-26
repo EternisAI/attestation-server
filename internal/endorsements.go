@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -18,6 +19,16 @@ import (
 	"github.com/eternisai/attestation-server/pkg/hexbytes"
 	"github.com/eternisai/attestation-server/pkg/nitro"
 )
+
+// errEndorsementRetrieval wraps errors from fetching endorsement documents
+// or cosign signatures over the network. Verification/parsing errors on
+// successfully retrieved content are NOT wrapped with this type, so callers
+// can use errors.As to distinguish infrastructure outages (skippable under
+// endorsements.skip_validation) from content integrity failures (never skipped).
+type errEndorsementRetrieval struct{ err error }
+
+func (e *errEndorsementRetrieval) Error() string { return e.err.Error() }
+func (e *errEndorsementRetrieval) Unwrap() error { return e.err }
 
 // fetchEndorsementDocumentsWithClient fetches endorsement documents from all
 // URLs in parallel with retry, verifies byte-for-byte identity, parses the
@@ -74,7 +85,7 @@ func (s *Server) fetchEndorsementDocumentsWithClient(ctx context.Context, urls [
 	}
 
 	if err := g.Wait(); err != nil {
-		return nil, nil, 0, 0, err
+		return nil, nil, 0, 0, &errEndorsementRetrieval{err: err}
 	}
 
 	// Verify byte-for-byte identity across all responses
@@ -163,7 +174,7 @@ func (s *Server) resolveEndorsementsWithClient(ctx context.Context, urls []*url.
 	if s.cfg.CosignVerify && s.sigstoreVerifier != nil {
 		bundleBytes, sigRawSize, sigTTL, fetchErr := s.fetchCosignSignatures(ctx, urls, client)
 		if fetchErr != nil {
-			return nil, nil, fmt.Errorf("cosign signature fetch: %w", fetchErr)
+			return nil, nil, &errEndorsementRetrieval{err: fmt.Errorf("cosign signature fetch: %w", fetchErr)}
 		}
 
 		cr, err = s.verifyCosignBundle(bundleBytes, rawBody)
@@ -197,9 +208,16 @@ func (s *Server) validateOwnEndorsements(ctx context.Context) error {
 
 	doc, cr, err := s.resolveEndorsements(ctx, s.endorsements)
 	if err != nil {
+		var retrieval *errEndorsementRetrieval
+		if s.cfg.EndorsementSkipValidation && errors.As(err, &retrieval) {
+			s.logger.Warn("endorsement retrieval failed, skipping validation because skip_validation is enabled", "error", err)
+			return nil
+		}
 		return err
 	}
 
+	// Endorsements were successfully retrieved — measurement comparison
+	// errors are never skipped, even with skip_validation enabled.
 	if cr != nil {
 		if err := s.validateCosignOIDs(cr, s.buildInfo); err != nil {
 			return fmt.Errorf("cosign: %w", err)
@@ -290,6 +308,11 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 
 	edp, cr, err := s.resolveEndorsements(ctx, urls)
 	if err != nil {
+		var retrieval *errEndorsementRetrieval
+		if s.cfg.EndorsementSkipValidation && errors.As(err, &retrieval) {
+			s.logger.Warn("dependency endorsement retrieval failed, skipping validation because skip_validation is enabled", "error", err)
+			return nil
+		}
 		return err
 	}
 	doc := *edp

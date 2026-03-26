@@ -40,6 +40,7 @@ stall_timeout       = "10s"  # max wait time before 429
 enforce = false
 
 [endorsements]
+skip_validation = false  # skip endorsement validation; for debugging or disaster recovery when endorsement infrastructure is unavailable
 dnssec          = false  # require DNSSEC validation for endorsement URL hosts
 allowed_domains = []     # empty = unrestricted; non-empty = exact hostname match only
 

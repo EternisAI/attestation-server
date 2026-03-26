@@ -108,6 +108,14 @@ Before collecting evidence for each request, the handler calls `validateOwnEndor
 - **Cache miss** (TTL expired) — documents are re-fetched and revalidated
 - **Failure** — handler returns 500, but the server stays up and self-heals when endorsements become available
 
+### Skip validation mode
+
+When `endorsements.skip_validation` is enabled (default `false`), endorsement *retrieval* failures are logged as warnings instead of causing errors. This is intended for disaster recovery when the endorsement-serving infrastructure is completely unavailable but service operations must be restored. The server logs a startup warning that security is weakened.
+
+**Only retrieval failures are skipped.** If endorsement documents are successfully fetched, measurement comparison is always performed — a mismatch between the endorsed golden values and the actual TEE evidence is a hard error regardless of this flag. This ensures that a TEE running modified code cannot pass attestation when endorsements are available.
+
+Network fetch errors from `fetchEndorsementDocumentsWithClient` and `fetchCosignSignatures` are wrapped as `*errEndorsementRetrieval`. Verification and parsing errors — byte-for-byte mismatch across providers, endorsement JSON parse failure, cosign bundle verification failure — are not wrapped. `validateOwnEndorsements` and `validateDependencyEndorsements` use `errors.As` to detect `*errEndorsementRetrieval` and only skip those when the flag is enabled. Cosign OID validation and measurement comparison errors are never skipped (they occur after `resolveEndorsements` returns successfully).
+
 ### Endorsement domain allowlist
 
 When `endorsements.allowed_domains` is configured (non-empty), endorsement document URLs are checked against the allowlist before fetching. Matching is exact hostname (case-insensitive) — subdomain matching is not supported; each host must be listed explicitly. The check applies to both own endorsement URLs and dependency endorsement URLs.
