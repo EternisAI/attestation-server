@@ -122,6 +122,9 @@ func (s *Server) fetchHTTPClient() *http.Client {
 // Cache-Control for max-age and no-cache/no-store, falls back to the
 // Expires header, and defaults to defaultTTL. TTL is capped at 24 hours.
 func parseCacheTTL(header http.Header, defaultTTL time.Duration) time.Duration {
+	if defaultTTL > fetchMaxTTL {
+		defaultTTL = fetchMaxTTL
+	}
 	if cc := header.Get("Cache-Control"); cc != "" {
 		lower := strings.ToLower(cc)
 		if strings.Contains(lower, "no-cache") || strings.Contains(lower, "no-store") {

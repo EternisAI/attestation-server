@@ -433,6 +433,13 @@ func TestParseCacheTTL(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("defaultTTL capped at 24h", func(t *testing.T) {
+		got := parseCacheTTL(http.Header{}, 48*time.Hour)
+		if got != 24*time.Hour {
+			t.Errorf("parseCacheTTL() with 48h default = %v, want %v", got, 24*time.Hour)
+		}
+	})
 }
 
 // --- parseByteSize ---
