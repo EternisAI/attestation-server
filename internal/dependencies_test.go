@@ -208,19 +208,38 @@ func TestVerifyDependencyReport_ClientCertMismatch(t *testing.T) {
 // testServerCertFP is a fake server cert fingerprint used in unit tests.
 const testServerCertFP = "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd"
 
-func TestVerifyDependencyReport_ServerCertSkippedWhenEmpty(t *testing.T) {
-	// When serverCertFP is empty, the check is skipped regardless of
-	// whether data.tls.private is present.
-	nonceHex := "aabb"
-	reportData := reportDataWithClientCert(nonceHex)
-	dataJSON, _ := json.Marshal(reportData)
-	report := &AttestationReport{
+// makeTestReport builds an AttestationReport with the given TLS fingerprints
+// and a single fake evidence blob. clientFP and privateFP may be empty to
+// omit the corresponding TLS field.
+func makeTestReport(t *testing.T, nonceHex, clientFP, privateFP string) *AttestationReport {
+	t.Helper()
+	rd := &AttestationReportData{Nonce: nonceHex}
+	if clientFP != "" || privateFP != "" {
+		rd.TLS = &TLSReportData{}
+		if clientFP != "" {
+			rd.TLS.Client = fingerprintBytes(clientFP)
+		}
+		if privateFP != "" {
+			rd.TLS.Private = fingerprintBytes(privateFP)
+		}
+	}
+	dataJSON, err := json.Marshal(rd)
+	if err != nil {
+		t.Fatalf("marshaling report data: %v", err)
+	}
+	return &AttestationReport{
 		Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
 		Data:     json.RawMessage(dataJSON),
 	}
+}
+
+func TestVerifyDependencyReport_ServerCertSkippedWhenEmpty(t *testing.T) {
+	// When serverCertFP is empty, the check is skipped regardless of
+	// whether data.tls.private is present.
+	report := makeTestReport(t, "aabb", testClientFP, "")
 
 	// Should reach crypto verification (fail on fake blob), not e2e error.
-	err := verifyDependencyReportOnly(report, nonceHex, testClientFP, "", time.Now())
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, "", time.Now())
 	if err == nil {
 		t.Fatal("expected error (crypto), got nil")
 	}
@@ -230,21 +249,9 @@ func TestVerifyDependencyReport_ServerCertSkippedWhenEmpty(t *testing.T) {
 }
 
 func TestVerifyDependencyReport_ServerCertMismatch(t *testing.T) {
-	nonceHex := "aabb"
-	reportData := &AttestationReportData{
-		Nonce: nonceHex,
-		TLS: &TLSReportData{
-			Client:  fingerprintBytes(testClientFP),
-			Private: fingerprintBytes("1111111111111111111111111111111111111111111111111111111111111111"),
-		},
-	}
-	dataJSON, _ := json.Marshal(reportData)
-	report := &AttestationReport{
-		Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
-		Data:     json.RawMessage(dataJSON),
-	}
+	report := makeTestReport(t, "aabb", testClientFP, "1111111111111111111111111111111111111111111111111111111111111111")
 
-	err := verifyDependencyReportOnly(report, nonceHex, testClientFP, testServerCertFP, time.Now())
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, testServerCertFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for server cert mismatch, got nil")
 	}
@@ -258,15 +265,9 @@ func TestVerifyDependencyReport_ServerCertMismatch(t *testing.T) {
 
 func TestVerifyDependencyReport_ServerCertMissing(t *testing.T) {
 	// data.tls.private is absent but serverCertFP is provided.
-	nonceHex := "aabb"
-	reportData := reportDataWithClientCert(nonceHex)
-	dataJSON, _ := json.Marshal(reportData)
-	report := &AttestationReport{
-		Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
-		Data:     json.RawMessage(dataJSON),
-	}
+	report := makeTestReport(t, "aabb", testClientFP, "")
 
-	err := verifyDependencyReportOnly(report, nonceHex, testClientFP, testServerCertFP, time.Now())
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, testServerCertFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error for missing server cert in report, got nil")
 	}
@@ -281,21 +282,9 @@ func TestVerifyDependencyReport_ServerCertMissing(t *testing.T) {
 func TestVerifyDependencyReport_ServerCertMatch(t *testing.T) {
 	// Server cert matches — should proceed to crypto verification (fail on
 	// fake blob), not stop at e2e.
-	nonceHex := "aabb"
-	reportData := &AttestationReportData{
-		Nonce: nonceHex,
-		TLS: &TLSReportData{
-			Client:  fingerprintBytes(testClientFP),
-			Private: fingerprintBytes(testServerCertFP),
-		},
-	}
-	dataJSON, _ := json.Marshal(reportData)
-	report := &AttestationReport{
-		Evidence: []*AttestationEvidence{{Kind: "nitronsm", Blob: []byte("fake")}},
-		Data:     json.RawMessage(dataJSON),
-	}
+	report := makeTestReport(t, "aabb", testClientFP, testServerCertFP)
 
-	err := verifyDependencyReportOnly(report, nonceHex, testClientFP, testServerCertFP, time.Now())
+	err := verifyDependencyReportOnly(report, "aabb", testClientFP, testServerCertFP, time.Now())
 	if err == nil {
 		t.Fatal("expected error (crypto), got nil")
 	}
