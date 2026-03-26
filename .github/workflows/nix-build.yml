@@ -3,11 +3,11 @@ name: Nix Build
 on:
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "*.md"
-      - "**/*.md"
-      - LICENSE
-      - NOTICE
+    paths:
+      - flake.nix
+      - flake.lock
+      - go.mod
+      - go.sum
 
 permissions: {}
 
