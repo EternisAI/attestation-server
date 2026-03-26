@@ -310,6 +310,7 @@ func sendReport(c *fiber.Ctx, report *AttestationReport, reportDataJSON []byte) 
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to marshal attestation report")
 	}
 	c.Set("Content-Type", "application/json")
+	c.Set("Cache-Control", "no-store")
 	return c.Send(body)
 }
 
