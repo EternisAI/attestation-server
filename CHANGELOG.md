@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.2.0](https://github.com/EternisAI/attestation-server/compare/v1.1.0...v1.2.0) (2026-03-26)
+
+
+### Features
+
+* make private TLS certificate optional for public-cert-only deployments ([a4349b1](https://github.com/EternisAI/attestation-server/commit/a4349b180eb5d76476eb9aaa43d8031fec1520ec))
+* verify dependency server TLS certificate against attestation report ([42dd053](https://github.com/EternisAI/attestation-server/commit/42dd053b0e67523e92643b27b4db6cdc79e1553b))
+
+
+### Bug Fixes
+
+* preserve handler-controlled error messages for 5xx responses ([bc3c407](https://github.com/EternisAI/attestation-server/commit/bc3c40774bd6d9ab4ed4cf0ac177635659cda029))
+* return 500 instead of 503 for TLS certificate verification failures ([d2855c9](https://github.com/EternisAI/attestation-server/commit/d2855c94f39ac826d8ba78fe4c2d7947928187a2))
+
+
+### Refactoring
+
+* extract makeTestReport helper in dependency tests ([e723373](https://github.com/EternisAI/attestation-server/commit/e7233739191271f7a2f1a556c59a8b661f2847f0))
+
+
+### Documentation
+
+* document config validation rules and Nix closure stripping in CLAUDE.md ([1600ee0](https://github.com/EternisAI/attestation-server/commit/1600ee02489914f5e1ce4891b03ca77d20b43159))
+
 ## [1.1.0](https://github.com/EternisAI/attestation-server/compare/v1.0.0...v1.1.0) (2026-03-26)
 
 
