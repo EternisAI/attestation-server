@@ -311,7 +311,7 @@ When disabled, a startup warning is logged: "certificate revocation checking is 
 
 ## Error information leakage
 
-The server returns opaque `"internal error"` messages for all 5xx responses to prevent leaking device errors, file paths, and firmware codes to external callers. The real error is logged at ERROR level with `request_id` for debugging. 4xx error messages are preserved since they describe client-fixable problems (bad nonce, missing cert, etc.).
+The server preserves handler-controlled error messages for all `fiber.NewError` responses (both 4xx and 5xx). Handler code must never include internal details (device errors, file paths, firmware codes) in these messages — only opaque descriptions like `"attestation failed"` or `"dependency attestation failed"`. Unhandled errors (plain `error` values not wrapped in `fiber.NewError`) fall back to a generic `"internal error"` message. The real error is always logged at ERROR level with `request_id` for debugging.
 
 ## XFCC header validation
 

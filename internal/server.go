@@ -439,19 +439,21 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 // errorHandler returns JSON-formatted error responses for all handler errors.
-// For 5xx errors, the response contains a generic message to avoid leaking
-// internal details (device errors, file paths, firmware codes). The real
-// error is logged at ERROR level for debugging. 4xx errors are returned
-// as-is since they describe client-fixable problems.
+// For fiber.Error values the handler-controlled message is returned as-is for
+// both 4xx and 5xx. This is safe because handler code only puts opaque
+// descriptions into fiber.NewError (e.g. "attestation failed", "dependency
+// attestation failed") — internal details (device errors, file paths,
+// firmware codes) are never included; they are only logged. Unhandled errors
+// (plain error values without fiber.Error wrapping) fall back to a generic
+// "internal error" message. The real error is always logged at ERROR level
+// with request_id for debugging.
 func (s *Server) errorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
 	msg := "internal error"
 	var fiberErr *fiber.Error
 	if errors.As(err, &fiberErr) {
 		code = fiberErr.Code
-		if code < 500 {
-			msg = fiberErr.Message
-		}
+		msg = fiberErr.Message
 	}
 	if code >= 500 {
 		requestID, _ := c.Locals("requestid").(string)

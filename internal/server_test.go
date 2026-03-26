@@ -277,13 +277,15 @@ func TestErrorHandler_FiberError400_PreservesMessage(t *testing.T) {
 	}
 }
 
-func TestErrorHandler_FiberError500_OpaqueMessage(t *testing.T) {
+func TestErrorHandler_FiberError500_PreservesMessage(t *testing.T) {
 	s := newTestServer()
 	app := fiber.New(fiber.Config{
 		ErrorHandler: s.errorHandler,
 	})
 	app.Get("/test", func(c *fiber.Ctx) error {
-		return fiber.NewError(fiber.StatusInternalServerError, "secret internal detail: /etc/firmware/v2.3")
+		// Handler code controls the message in fiber.NewError — it must
+		// never include secrets. The error handler passes it through.
+		return fiber.NewError(fiber.StatusInternalServerError, "attestation failed")
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -299,11 +301,8 @@ func TestErrorHandler_FiberError500_OpaqueMessage(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
-	if contains(bodyStr, "secret") || contains(bodyStr, "/etc/firmware") {
-		t.Errorf("5xx response should not leak internal details, got %s", bodyStr)
-	}
-	if !contains(bodyStr, "internal error") {
-		t.Errorf("5xx response should contain generic message, got %s", bodyStr)
+	if !contains(bodyStr, "attestation failed") {
+		t.Errorf("5xx fiber.Error message should be preserved, got %s", bodyStr)
 	}
 }
 
