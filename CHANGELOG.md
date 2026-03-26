@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.1.0](https://github.com/EternisAI/attestation-server/compare/v1.0.0...v1.1.0) (2026-03-26)
+
+
+### Features
+
+* make HTTP cache default TTL configurable (http.cache.default_ttl) ([6e46691](https://github.com/EternisAI/attestation-server/commit/6e466913e1e5e51dba7528b0d116fa5747ac6b6f))
+
+
+### Bug Fixes
+
+* clamp defaultTTL to 24h cap in parseCacheTTL ([50b3025](https://github.com/EternisAI/attestation-server/commit/50b3025628bafcd3cfed3201292830327c961645))
+* default bind address to 127.0.0.1 instead of 0.0.0.0 ([4ead045](https://github.com/EternisAI/attestation-server/commit/4ead0452af1f77fba3956b09615ed0aa48557d20))
+* fail on invalid duration and byte-size config values ([ad7ddbf](https://github.com/EternisAI/attestation-server/commit/ad7ddbf93aa503f6b78b29b492df3661ad98e175))
+* guard parseByteSize against uint64-to-int64 overflow ([97ef623](https://github.com/EternisAI/attestation-server/commit/97ef6232221afce5eb9ebb780e79dfcfe4ac1ed4))
+* reject negative durations in parseDuration ([ae5e012](https://github.com/EternisAI/attestation-server/commit/ae5e0121d8322c6eb96945fe694a275cd0c6e893))
+* reject zero durations for timeout and interval config values ([11b3304](https://github.com/EternisAI/attestation-server/commit/11b3304acf75867818f4bb768846738000ab97df))
+* respect no-cache/no-store TTL=0 from parseCacheTTL ([8b20cae](https://github.com/EternisAI/attestation-server/commit/8b20cae9341c29af159536b0f9863a7e4435fcc8))
+
+
+### Refactoring
+
+* use dustin/go-humanize for http.cache.size parsing ([98d895b](https://github.com/EternisAI/attestation-server/commit/98d895b5289e0f953b8fb4ec2ca0f7e8c38dc3be))
+
+
+### Documentation
+
+* fix parseDuration comment to reflect actual behavior ([c601b56](https://github.com/EternisAI/attestation-server/commit/c601b56c87cc9f455617131cc835e5519d0a43cc))
+
 ## 1.0.0 (2026-03-26)
 
 
