@@ -43,7 +43,7 @@ release-please-config.json # Release Please configuration (changelog sections, v
 
 ## Configuration
 
-Configuration is loaded via a TOML config file, environment variables, and CLI flags. Priority (highest to lowest): CLI flags > env vars > config file > defaults.
+Configuration is loaded via a TOML config file, environment variables, and CLI flags. Priority (highest to lowest): CLI flags > env vars > config file > defaults. `LoadConfig` validates all values at startup: duration fields reject negative values (`parseDuration`), timeout and interval fields (`endorsements.client.timeout`, `revocation.refresh_interval`, `ratelimit.stall_timeout`) additionally reject zero, byte-size fields use `dustin/go-humanize` for parsing with int64 overflow protection, and invalid durations or byte sizes fail the startup.
 
 ### Config file
 
@@ -421,7 +421,7 @@ Fixture files:
 
 ## Nix build
 
-The project provides a Nix flake for reproducible, hermetic builds. Inputs are pinned to exact commit hashes in `flake.nix` and locked in `flake.lock`. The flake builds a statically linked binary (`CGO_ENABLED=0`, stripped with `-s -w`). Tests run during the build (live DNSSEC tests skip themselves in the sandbox since `DNSSEC_LIVE_TEST` is unset; all other tests use fixtures). The source filter includes `*.go`, `*.json` (test fixtures), `go.mod`, and `go.sum` — changes to docs or config do not trigger a rebuild.
+The project provides a Nix flake for reproducible, hermetic builds. Inputs are pinned to exact commit hashes in `flake.nix` and locked in `flake.lock`. The flake builds a statically linked binary (`CGO_ENABLED=0`, stripped with `-s -w`). Tests run during the build (live DNSSEC tests skip themselves in the sandbox since `DNSSEC_LIVE_TEST` is unset; all other tests use fixtures). The source filter includes `*.go`, `*.json` (test fixtures), `go.mod`, and `go.sum` — changes to docs or config do not trigger a rebuild. Runtime closure references to nixpkgs-patched `mailcap`, `iana-etc`, and `tzdata` store paths are stripped via `removeReferencesTo` (the server does not use `mime.TypeByExtension`, `net.LookupPort`, or `time.LoadLocation`), keeping the Docker image minimal.
 
 The flake exposes two package targets:
 - `default` / `attestation-server` — the statically linked binary
@@ -439,9 +439,9 @@ When `go.mod` or `go.sum` change, the `vendorHash` in `flake.nix` must be update
 
 ## CI/CD
 
-- **CI** (`.github/workflows/ci.yml`) — runs on pushes to non-main branches: `go fmt` check, `go test` with `DNSSEC_LIVE_TEST=1`, `go vet`, `go build`.
-- **Nix Build** (`.github/workflows/nix-build.yml`) — runs on PRs targeting main: `nix build .#docker-image` (runs offline test suite via `doCheck`). Catches flake breakage before merge.
-- Branch protection on main should require both `Test` and `Build` status checks to pass.
+- **CI** (`.github/workflows/ci.yml`) — runs on pushes to non-main branches: `go fmt` check, `go test` with `DNSSEC_LIVE_TEST=1`, `go vet`, `go build`. Skipped for doc-only changes (`*.md`, `LICENSE`, `NOTICE`).
+- **Nix Build** (`.github/workflows/nix-build.yml`) — runs on PRs targeting main: `nix build .#docker-image` (runs offline test suite via `doCheck`). Catches flake breakage before merge. Skipped for doc-only changes (`*.md`, `LICENSE`, `NOTICE`).
+- Branch protection on main should require both `Test` and `Build` status checks to pass. If using GitHub rulesets, mark them as "skippable" so doc-only PRs are not blocked when the Nix Build workflow is skipped by `paths-ignore`.
 - **Release** (`.github/workflows/release.yml`) — runs on push to main, three sequential jobs:
   1. **Build** — `nix build .#docker-image` (runs tests via `doCheck`), uploads image tarball as artifact
   2. **Release** — Release Please creates/updates a release PR; on merge, creates a GitHub Release + tag
