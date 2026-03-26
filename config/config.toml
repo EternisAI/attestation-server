@@ -5,7 +5,7 @@ format = "json"   # json, text
 level  = "info"   # debug, info, warn, error
 
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 8187
 
 [paths]
@@ -59,7 +59,8 @@ uri_regex = ""  # regex match override for BuildSignerURI OID (ignored if uri is
 allow_proxy = false  # honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars (off by default; needed in Nitro Enclaves with vsock-proxy)
 
 [http.cache]
-size = "100MiB"  # max memory for shared HTTP fetch cache (endorsements + cosign signatures)
+size        = "100MiB"  # max memory for shared HTTP fetch cache (endorsements + cosign signatures)
+default_ttl = "1h"      # default TTL when response has no Cache-Control header (capped at 24h)
 
 [dependencies]
 # URLs of dependency attestation servers whose reports are fetched,

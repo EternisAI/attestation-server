@@ -3,13 +3,14 @@ package app
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/spf13/viper"
 )
@@ -47,6 +48,7 @@ type Config struct {
 	EndorsementClientTimeout  time.Duration
 	HTTPAllowProxy            bool
 	HTTPCacheSize             int64
+	HTTPCacheDefaultTTL       time.Duration
 	RevocationEnabled         bool
 	RevocationRefreshInterval time.Duration
 	RateLimitEnabled          bool
@@ -113,23 +115,34 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	endorsementTimeout, err := time.ParseDuration(viper.GetString("endorsements.client.timeout"))
+	endorsementTimeout, err := parseDuration("endorsements.client.timeout")
 	if err != nil {
-		endorsementTimeout = 10 * time.Second
+		return nil, err
+	}
+	if endorsementTimeout == 0 {
+		return nil, fmt.Errorf("endorsements.client.timeout: must be positive")
 	}
 	httpCacheSize, err := parseByteSize(viper.GetString("http.cache.size"))
 	if err != nil {
-		httpCacheSize = 100 << 20
+		return nil, fmt.Errorf("http.cache.size: %w", err)
 	}
-
-	revocationRefreshInterval, err := time.ParseDuration(viper.GetString("revocation.refresh_interval"))
+	httpCacheDefaultTTL, err := parseDuration("http.cache.default_ttl")
 	if err != nil {
-		revocationRefreshInterval = 12 * time.Hour
+		return nil, err
 	}
-
-	rateLimitStallTimeout, err := time.ParseDuration(viper.GetString("ratelimit.stall_timeout"))
+	revocationRefreshInterval, err := parseDuration("revocation.refresh_interval")
 	if err != nil {
-		rateLimitStallTimeout = 10 * time.Second
+		return nil, err
+	}
+	if revocationRefreshInterval == 0 {
+		return nil, fmt.Errorf("revocation.refresh_interval: must be positive")
+	}
+	rateLimitStallTimeout, err := parseDuration("ratelimit.stall_timeout")
+	if err != nil {
+		return nil, err
+	}
+	if rateLimitStallTimeout == 0 {
+		return nil, fmt.Errorf("ratelimit.stall_timeout: must be positive")
 	}
 
 	cosignBuildSigner := CosignBuildSignerConfig{
@@ -172,6 +185,7 @@ func LoadConfig() (*Config, error) {
 		EndorsementClientTimeout:  endorsementTimeout,
 		HTTPAllowProxy:            viper.GetBool("http.allow_proxy"),
 		HTTPCacheSize:             httpCacheSize,
+		HTTPCacheDefaultTTL:       httpCacheDefaultTTL,
 		CosignVerify:              viper.GetBool("endorsements.cosign.verify"),
 		CosignURLSuffix:           viper.GetString("endorsements.cosign.url_suffix"),
 		CosignTUFCachePath:        viper.GetString("endorsements.cosign.tuf_cache_path"),
@@ -308,49 +322,37 @@ func parseLogLevel(s string) slog.Level {
 	}
 }
 
-// parseByteSize parses a human-readable byte size string like "100MiB" or
-// "1GiB" into a byte count. Supported suffixes: B, KiB, MiB, GiB, TiB
-// (case-insensitive). A bare number without suffix is treated as bytes.
+// parseDuration reads a viper string key and parses it as a time.Duration.
+// Returns an error if the value is empty, unparseable, or negative.
+func parseDuration(key string) (time.Duration, error) {
+	s := viper.GetString(key)
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q: %w", key, s, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s: negative duration %q", key, s)
+	}
+	return d, nil
+}
+
+// parseByteSize parses a human-readable byte size string into a byte count
+// using github.com/dustin/go-humanize. Supports both SI (KB, MB, GB, TB) and
+// IEC (KiB, MiB, GiB, TiB) suffixes, fractional values, and flexible
+// whitespace.
 func parseByteSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, fmt.Errorf("empty byte size")
 	}
-
-	suffixes := []struct {
-		suffix     string
-		multiplier int64
-	}{
-		{"TiB", 1 << 40},
-		{"GiB", 1 << 30},
-		{"MiB", 1 << 20},
-		{"KiB", 1 << 10},
-		{"B", 1},
-	}
-
-	lower := strings.ToLower(s)
-	for _, sf := range suffixes {
-		if strings.HasSuffix(lower, strings.ToLower(sf.suffix)) {
-			numStr := strings.TrimSpace(s[:len(s)-len(sf.suffix)])
-			n, err := strconv.ParseInt(numStr, 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
-			}
-			if n < 0 {
-				return 0, fmt.Errorf("negative byte size %q", s)
-			}
-			return n * sf.multiplier, nil
-		}
-	}
-
-	n, err := strconv.ParseInt(s, 10, 64)
+	n, err := humanize.ParseBytes(s)
 	if err != nil {
 		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
 	}
-	if n < 0 {
-		return 0, fmt.Errorf("negative byte size %q", s)
+	if n > uint64(math.MaxInt64) {
+		return 0, fmt.Errorf("byte size %q overflows int64", s)
 	}
-	return n, nil
+	return int64(n), nil
 }
 
 // domainNameRe matches valid DNS domain names (no ports, no paths).

@@ -61,7 +61,7 @@ format = "json"
 level  = "info"
 
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 8187
 
 [paths]
@@ -115,7 +115,8 @@ uri_regex = ""
 allow_proxy = false
 
 [http.cache]
-size = "100MiB"
+size        = "100MiB"
+default_ttl = "1h"
 
 [dependencies]
 endpoints = []
@@ -150,7 +151,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_CONFIG_FILE` | — | — | Path to TOML config file |
 | `ATTESTATION_SERVER_LOG_FORMAT` | `log.format` | `json` | Log format: `json`/`text` |
 | `ATTESTATION_SERVER_LOG_LEVEL` | `log.level` | `info` | Log level: `debug`/`info`/`warn`/`error` |
-| `ATTESTATION_SERVER_SERVER_HOST` | `server.host` | `0.0.0.0` | HTTP bind host |
+| `ATTESTATION_SERVER_SERVER_HOST` | `server.host` | `127.0.0.1` | HTTP bind host |
 | `ATTESTATION_SERVER_SERVER_PORT` | `server.port` | `8187` | HTTP bind port |
 | `ATTESTATION_SERVER_PATHS_BUILD_INFO` | `paths.build_info` | `/etc/build-info.json` | Path to build information file |
 | `ATTESTATION_SERVER_PATHS_ENDORSEMENTS` | `paths.endorsements` | `/etc/endorsements.json` | Path to endorsements URL list file |
@@ -186,6 +187,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_BUILD_SIGNER_URI_REGEX` | `endorsements.cosign.build_signer.uri_regex` | — | Regex match override for BuildSignerURI Fulcio OID (ignored if `uri` is set) |
 | `ATTESTATION_SERVER_HTTP_ALLOW_PROXY` | `http.allow_proxy` | `false` | Honour `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars for the server's outbound HTTP clients (endorsement/cosign fetches, SEV-SNP CRL fetches, dependency requests). Off by default; required in environments like AWS Nitro Enclaves where a vsock-proxy is the only egress path. TDX collateral fetching (go-tdx-guest) always honours proxy env vars via `http.DefaultTransport` regardless of this setting |
 | `ATTESTATION_SERVER_HTTP_CACHE_SIZE` | `http.cache.size` | `100MiB` | Maximum memory for the shared HTTP fetch cache (endorsements + cosign signatures, ristretto) |
+| `ATTESTATION_SERVER_HTTP_CACHE_DEFAULT_TTL` | `http.cache.default_ttl` | `1h` | Default cache TTL when response has no Cache-Control header (capped at 24h) |
 
 List-typed environment variables (`ATTESTATION_SERVER_REPORT_USER_DATA_ENV`, `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS`) support comma-separated values: `VAR=a,b,c`. Spaces around commas are trimmed.
 
@@ -297,7 +299,7 @@ Over-limit requests are **stalled** (blocked in a FIFO queue) up to `ratelimit.s
 When `revocation.enabled` is true (the default), the server checks TEE endorsement key certificates against Certificate Revocation Lists. CRL fetching is conditional on configuration:
 
 - **SEV-SNP**: A background goroutine fetches AMD KDS CRLs for all supported product lines (Milan, Genoa, Turin) at `revocation.refresh_interval` (default 12h). Both VCEK and VLEK CRLs are fetched. CRLs are initialized when local SEV-SNP evidence is enabled **or** when dependency endpoints are configured (dependencies may include SEV-SNP evidence requiring revocation checks). The `crlCache` stores parsed `x509.RevocationList` entries and checks endorsement key serial numbers during verification. Design is **fail-open**: if no CRL data is available yet (first fetch still pending or failed), certificates are accepted. CRL fetches use the server's `fetchHTTPClient()` and honour `http.allow_proxy`.
-- **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching (`CheckRevocations: true, GetCollateral: true`). The server provides a `cachedHTTPSGetter` (via `VerifyOpt.Getter`) that caches Intel PCS responses (TCB info, QE identity, PCK CRL, Root CA CRL) in the shared ristretto cache. On cache hit, no network calls are made. TTL is derived from response `Cache-Control` headers; Intel PCS currently returns no cache headers, so the default 30-minute TTL applies. The go-tdx-guest library still validates `NextUpdate` expiry on all collateral, so stale cached data is rejected. The cached getter uses the server's `fetchHTTPClient()` and honours `http.allow_proxy`.
+- **TDX**: Revocation checking is delegated to go-tdx-guest's built-in Intel PCS collateral fetching (`CheckRevocations: true, GetCollateral: true`). The server provides a `cachedHTTPSGetter` (via `VerifyOpt.Getter`) that caches Intel PCS responses (TCB info, QE identity, PCK CRL, Root CA CRL) in the shared ristretto cache. On cache hit, no network calls are made. TTL is derived from response `Cache-Control` headers; Intel PCS currently returns no cache headers, so `http.cache.default_ttl` applies. The go-tdx-guest library still validates `NextUpdate` expiry on all collateral, so stale cached data is rejected. The cached getter uses the server's `fetchHTTPClient()` and honours `http.allow_proxy`.
 - **Nitro**: No CRL mechanism exists (ephemeral certificate chains per attestation; revocation is handled by AWS at the hypervisor level).
 
 When disabled, a startup warning is logged: "certificate revocation checking is disabled, revoked TEE endorsement keys will be accepted".
@@ -347,7 +349,7 @@ Uses system/Mozilla root CAs (via `golang.org/x/crypto/x509roots/fallback` blank
 
 ### Endorsement cache
 
-Uses `dgraph-io/ristretto/v2` with URL-string keys in a shared `fetcherCache` (stores both `*EndorsementDocument` and `*cosignResult` values — endorsement URLs and signature URLs don't collide). When multiple URLs resolve to the same document (verified byte-for-byte), the same pointer is stored under all URL keys (cost charged once). TTL is derived from Cache-Control `max-age` (capped at 24h, default 30m).
+Uses `dgraph-io/ristretto/v2` with URL-string keys in a shared `fetcherCache` (stores both `*EndorsementDocument` and `*cosignResult` values — endorsement URLs and signature URLs don't collide). When multiple URLs resolve to the same document (verified byte-for-byte), the same pointer is stored under all URL keys (cost charged once). TTL is derived from Cache-Control `max-age` (capped at 24h, default `http.cache.default_ttl`).
 
 Endorsement URLs are tied to CI commit hashes with immutable content. Extended caching (up to 24h) is by design — measurement changes require new commits and new URLs. The TTL cap and per-request revalidation on cache miss provide eventual consistency.
 
