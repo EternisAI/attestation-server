@@ -15,7 +15,7 @@ main.go                    # entry point
 cmd/root.go                # cobra root command; initializes config, logger, and starts server
 internal/attestation.go    # GET /api/v1/attestation handler and helpers (package app)
 internal/config.go         # Config struct and LoadConfig() (package app)
-internal/dependencies.go   # Transitive dependency attestation: parallel fetch, verify, cycle detection (package app)
+internal/dependencies.go   # Transitive dependency attestation: parallel fetch, verify, cycle detection, server cert validation (package app)
 internal/cosign.go         # Cosign signature verification: bundle fetch, Sigstore/Rekor verification, Fulcio OID extraction + validation (package app)
 internal/endorsements.go   # Endorsement document fetching, DNSSEC, measurement validation, cosign integration (package app)
 internal/fetch.go          # Generic HTTP fetch with retry, per-attempt WARN logging, cache (ristretto), TTL parsing, cachedHTTPSGetter for TDX collateral — shared by endorsements, cosign, and TDX (package app)
@@ -176,7 +176,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_RATELIMIT_STALL_TIMEOUT` | `ratelimit.stall_timeout` | `10s` | Max time an over-limit request is stalled before receiving 429; IP extracted from `X-Envoy-Original-IP` > `X-Forwarded-For` > connection IP |
 | `ATTESTATION_SERVER_SECURE_BOOT_ENFORCE` | `secure_boot.enforce` | `false` | Enforce UEFI Secure Boot; exit on startup if not enabled. UEFI secure boot detection is skipped when NitroNSM evidence is enabled (enclaves have no EFI firmware; boot integrity is proven by NSM PCR measurements) |
 | `ATTESTATION_SERVER_REPORT_USER_DATA_ENV` | `report.user_data.env` | `[]` | Comma-separated environment variable names to include in report (unique) |
-| `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints are verified against the private CA bundle (mTLS); HTTP endpoints are a design decision for transparent proxy configurations where Envoy diverts traffic through mTLS on non-loopback interfaces — the e2e encryption proof (XFCC fingerprint check) ensures the connection was mTLS-protected regardless of the URL scheme |
+| `ATTESTATION_SERVER_DEPENDENCIES_ENDPOINTS` | `dependencies.endpoints` | `[]` | Comma-separated URLs of dependency attestation servers. HTTPS endpoints are verified against the private CA bundle (mTLS) and the server's TLS certificate fingerprint is matched against `data.tls.private` in the attestation report; HTTP endpoints are a design decision for transparent proxy configurations where Envoy diverts traffic through mTLS on non-loopback interfaces — the e2e encryption proof (XFCC fingerprint check + server cert check for HTTPS) ensures the connection was mTLS-protected regardless of the URL scheme |
 | `ATTESTATION_SERVER_ENDORSEMENTS_DNSSEC` | `endorsements.dnssec` | `false` | Require strict DNSSEC validation for endorsement URL hosts |
 | `ATTESTATION_SERVER_ENDORSEMENTS_ALLOWED_DOMAINS` | `endorsements.allowed_domains` | `[]` | Comma-separated list of allowed endorsement hostnames (exact match). Empty = unrestricted. Applies to both own and dependency endorsement URLs |
 | `ATTESTATION_SERVER_ENDORSEMENTS_CLIENT_TIMEOUT` | `endorsements.client.timeout` | `10s` | Overall timeout for fetching endorsement documents and cosign signatures (with retries) |
@@ -254,7 +254,12 @@ When `dependencies.endpoints` is configured, the attestation handler fetches and
 
 Each dependency response is parsed as an `AttestationReport`, verified (nonce binding + cryptographic evidence verification for all known TEE types including NitroTPM→SEV-SNP chaining), and embedded as `json.RawMessage` in the `dependencies` field. Raw bytes are stored instead of re-marshaled structs to avoid `goccy/go-json` zero-copy string issues.
 
-After cryptographic verification, the client certificate fingerprint check enforces end-to-end encryption: the dependency's `data.tls.client` must be present and match the SHA-256 fingerprint of our private certificate (which is used as the client cert for outgoing mTLS connections). If missing or mismatched, a descriptive error is logged and an opaque error is returned to the caller.
+After cryptographic verification, two certificate fingerprint checks enforce end-to-end encryption:
+
+1. **Client cert check**: the dependency's `data.tls.client` must be present and match the SHA-256 fingerprint of our private certificate (which is used as the client cert for outgoing mTLS connections). This proves the dependency (via its Envoy) saw our client certificate.
+2. **Server cert check** (HTTPS only): when the connection is over HTTPS, the server's leaf certificate fingerprint observed during the TLS handshake is compared against the dependency's `data.tls.private`. This binds the attestation report to the actual TLS connection, catching relay proxies that hold a valid CA-signed cert but are not the TEE. Skipped for plain HTTP endpoints where `resp.TLS` is nil (Envoy terminates TLS on the loopback interface).
+
+If either check fails, a descriptive error is logged and an opaque error is returned to the caller.
 
 The dependency HTTP client verifies server certificates against the private CA bundle (`tls.private.ca_path`) and presents the private certificate as the TLS client cert. All private certificates in the dependency chain must be issued by the same CA — Envoy only populates the XFCC header (which provides the client cert fingerprint) when the client cert passes CA verification.
 
@@ -417,7 +422,7 @@ Fixture files:
 - `pkg/sevsnp/testdata/sevsnp_attestation_gcp.json`
 - `pkg/tdx/testdata/tdx_attestation.json`
 - `internal/testdata/nitrotpm_sevsnp_attestation.json` (chained NitroTPM → SEV-SNP)
-- `internal/testdata/dependencies_attestation.json` (diamond dependency graph: A → {B, C}, B → C with NitroTPM+SEV-SNP, TDX, and SEV-SNP evidence across services; each dependency has client cert matching caller's private cert)
+- `internal/testdata/dependencies_attestation.json` (diamond dependency graph: A → {B, C}, B → C with NitroTPM+SEV-SNP, TDX, and SEV-SNP evidence across services; each dependency has client cert matching caller's private cert; server cert validation is tested via unit tests with synthetic fingerprints since fixtures lack TLS connection state)
 
 ## Nix build
 

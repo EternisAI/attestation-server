@@ -42,13 +42,18 @@ Private TLS key material is loaded inside the TEE and never leaves it. The certi
 
 ### Dependency e2e verification
 
-After cryptographically verifying a dependency's attestation report, the server checks that `data.tls.client` in the dependency's response matches the SHA-256 fingerprint of the private certificate that was presented as the TLS client cert when connecting. This confirms:
+After cryptographically verifying a dependency's attestation report, the server performs two certificate fingerprint checks:
+
+1. **Client cert (XFCC)**: `data.tls.client` in the dependency's response must match the SHA-256 fingerprint of the private certificate that was presented as the TLS client cert when connecting. This confirms the dependency saw our specific client certificate (not a proxy's).
+2. **Server cert** (HTTPS only): when the dependency was reached over HTTPS, the server's TLS leaf certificate fingerprint observed during the handshake must match the dependency's `data.tls.private`. This binds the attestation report to the actual TLS peer, catching relay proxies that hold a valid CA-signed cert but are not the TEE. This check is independent of Envoy's XFCC forwarding policy. Skipped for plain HTTP endpoints (transparent proxy configurations where Envoy terminates TLS on the loopback interface).
+
+Together these confirm:
 
 - The dependency saw our specific client certificate (not a proxy's)
 - The connection was encrypted end-to-end between the two TEEs
-- No intermediate proxy stripped or replaced the client certificate
+- The attestation report was produced by the server that terminated our TLS connection, not relayed through an intermediary
 
-If the fingerprint is missing or mismatched, a descriptive error is logged but an opaque error is returned to the caller (preventing information leakage about the internal certificate infrastructure).
+If either fingerprint is missing or mismatched, a descriptive error is logged but an opaque error is returned to the caller (preventing information leakage about the internal certificate infrastructure).
 
 ### XFCC header validation
 

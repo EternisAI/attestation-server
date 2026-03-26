@@ -121,6 +121,7 @@ When `dependencies.endpoints` is configured, the server fetches attestation repo
    a. Each dependency receives nonce_digest as x-attestation-nonce header
    b. Each response is cryptographically verified (evidence + nonce binding)
    c. Client certificate fingerprint is checked for e2e encryption proof
+   c'. For HTTPS: server TLS certificate is matched against data.tls.private
    d. Endorsement measurements are validated against dependency evidence
 5. Server collects own TEE evidence using nonce_digest
 6. Server returns the full report with embedded dependency reports

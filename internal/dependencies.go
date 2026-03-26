@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/tls"
 	"encoding/hex"
@@ -223,6 +224,18 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 	}
 	defer resp.Body.Close()
 
+	// Capture the server's leaf certificate fingerprint from the TLS
+	// connection state. For HTTPS endpoints this binds the attestation
+	// report to the actual TLS certificate observed on the wire,
+	// independent of the XFCC header. For plain HTTP endpoints (local
+	// transparent proxy to Envoy) resp.TLS is nil and the check is
+	// skipped — e2e encryption is proven by the XFCC client cert check.
+	var serverCertFP string
+	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		h := sha256.Sum256(resp.TLS.PeerCertificates[0].Raw)
+		serverCertFP = hex.EncodeToString(h[:])
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusConflict {
 			return nil, errDependencyCycle
@@ -240,7 +253,7 @@ func (s *Server) fetchAndVerifyDependency(ctx context.Context, client *http.Clie
 		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
-	parsed, err := verifyDependencyReport(&report, nonceHex, privFP, time.Now(), revocationOpts{
+	parsed, err := verifyDependencyReport(&report, nonceHex, privFP, serverCertFP, time.Now(), revocationOpts{
 		sevsnpChecker: s.sevsnpRevocationChecker(),
 		tdxVerifyOpt:  s.tdxVerifyOpt(),
 	})
@@ -284,8 +297,8 @@ type revocationOpts struct {
 
 // verifyDependencyReportOnly is a convenience wrapper around
 // verifyDependencyReport that discards the parsed evidence results.
-func verifyDependencyReportOnly(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time, revOpts ...revocationOpts) error {
-	_, err := verifyDependencyReport(report, expectedNonce, clientCertFP, now, revOpts...)
+func verifyDependencyReportOnly(report *AttestationReport, expectedNonce, clientCertFP, serverCertFP string, now time.Time, revOpts ...revocationOpts) error {
+	_, err := verifyDependencyReport(report, expectedNonce, clientCertFP, serverCertFP, now, revOpts...)
 	return err
 }
 
@@ -298,8 +311,15 @@ func verifyDependencyReportOnly(report *AttestationReport, expectedNonce, client
 //
 // clientCertFP is the SHA-256 hex fingerprint of the private certificate
 // we presented as the TLS client cert when connecting to the dependency.
-// The dependency must include this in data.tls.client.certificate.
-func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCertFP string, now time.Time, revOpts ...revocationOpts) (*parsedDependencyEvidence, error) {
+// The dependency must include this in data.tls.client.
+//
+// serverCertFP is the SHA-256 hex fingerprint of the server's leaf
+// certificate observed during the TLS handshake. When non-empty, it is
+// verified against data.tls.private — proving the attestation report was
+// produced by the server that terminated the TLS connection, not a relay
+// proxy. Empty string skips this check (for plain HTTP endpoints where
+// resp.TLS is nil).
+func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCertFP, serverCertFP string, now time.Time, revOpts ...revocationOpts) (*parsedDependencyEvidence, error) {
 	if len(report.Evidence) == 0 {
 		return nil, fmt.Errorf("no evidence in report")
 	}
@@ -322,6 +342,22 @@ func verifyDependencyReport(report *AttestationReport, expectedNonce, clientCert
 	if hex.EncodeToString(reportData.TLS.Client) != clientCertFP {
 		return nil, &errE2E{msg: fmt.Sprintf("client certificate fingerprint mismatch: expected %s, got %s",
 			clientCertFP, hex.EncodeToString(reportData.TLS.Client))}
+	}
+
+	// When connecting over HTTPS, verify that the server's TLS certificate
+	// matches what the dependency reports as its private certificate. This
+	// binds the attestation to the actual TLS connection, catching relay
+	// proxies that hold a valid CA-signed cert but are not the TEE.
+	// Skipped for plain HTTP (serverCertFP is empty) where Envoy terminates
+	// TLS on the loopback — e2e is proven by the XFCC client cert check.
+	if serverCertFP != "" {
+		if len(reportData.TLS.Private) == 0 {
+			return nil, &errE2E{msg: "dependency response missing private certificate fingerprint in attestation data"}
+		}
+		if hex.EncodeToString(reportData.TLS.Private) != serverCertFP {
+			return nil, &errE2E{msg: fmt.Sprintf("server certificate fingerprint mismatch: TLS peer presented %s, report claims %s",
+				serverCertFP, hex.EncodeToString(reportData.TLS.Private))}
+		}
 	}
 
 	// Compact the data JSON before hashing. The attestation handler

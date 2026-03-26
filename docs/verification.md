@@ -135,6 +135,7 @@ Each entry in `dependencies` is a complete attestation report with the same stru
 
 - **Nonce binding**: the dependency's nonce should match the nonce digest from the parent's `data`
 - **Client certificate**: the dependency's `data.tls.client` should match the parent's private certificate fingerprint (`data.tls.private`), confirming mTLS between the two TEEs
+- **Server certificate** (HTTPS only): if the dependency was fetched over HTTPS, the server's TLS leaf certificate fingerprint observed during the handshake should match the dependency's `data.tls.private`. This binds the attestation report to the actual TLS peer, catching relay proxies that hold a valid CA-signed cert but are not the TEE. Skipped for plain HTTP endpoints (transparent proxy configurations)
 - **Endorsements**: the dependency's endorsement documents should be fetched and validated independently — each service in the chain has its own build provenance and golden measurements from its own CI/CD pipeline
 
 ## Example: minimal Go verifier

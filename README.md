@@ -142,9 +142,9 @@ sevsnp   = false    # AMD SEV-SNP (combinable with nitrotpm)
 tdx      = false    # Intel TDX (exclusive)
 
 [tls.private]
-cert_path = ""      # required — private mTLS certificate (ECDSA)
-key_path  = ""      # required — private key
-ca_path   = ""      # required — CA bundle for the dependency chain
+cert_path = ""      # private mTLS certificate (ECDSA) — required with dependencies or without public cert
+key_path  = ""      # private key
+ca_path   = ""      # CA bundle for the dependency chain
 
 [dependencies]
 endpoints = []      # URLs of downstream attestation servers
