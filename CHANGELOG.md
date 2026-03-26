@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.0](https://github.com/EternisAI/attestation-server/compare/v1.2.0...v1.3.0) (2026-03-26)
+
+
+### Features
+
+* add endorsements.skip_validation setting for disaster recovery ([92cba6f](https://github.com/EternisAI/attestation-server/commit/92cba6fa9baa6866284f867fa693e39d6c3b74df))
+* add endorsements.skip_validation setting for disaster recovery ([1a0bb9e](https://github.com/EternisAI/attestation-server/commit/1a0bb9e519e9d37645d272cfecd9ed4911203d61))
+* add health check endpoints ([dc8dd79](https://github.com/EternisAI/attestation-server/commit/dc8dd79ea283575ecffc8c9738ba5c5b7cee2298))
+
+
+### Bug Fixes
+
+* only skip retrieval errors under endorsements.skip_validation ([77564f2](https://github.com/EternisAI/attestation-server/commit/77564f273c54fdc3baa4b22513b6d99c1053265f))
+
+
+### Documentation
+
+* compress CLAUDE.md from 42k to 12k chars ([6ce19a1](https://github.com/EternisAI/attestation-server/commit/6ce19a1069065a0b95b1327ec4504074173cc595))
+
 ## [1.2.0](https://github.com/EternisAI/attestation-server/compare/v1.1.0...v1.2.0) (2026-03-26)
 
 
