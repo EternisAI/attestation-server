@@ -40,6 +40,19 @@
             # Live DNSSEC tests are gated behind DNSSEC_LIVE_TEST env var
             # and skip themselves in the sandbox; all other tests use fixtures
             doCheck = true;
+
+            # The Go stdlib in nixpkgs is patched to reference nix store paths
+            # for mailcap (mime types), iana-etc (/etc/services), and tzdata.
+            # This server does not use mime.TypeByExtension, net.LookupPort,
+            # or time.LoadLocation, so strip these references to keep the
+            # runtime closure (and Docker image) minimal.
+            nativeBuildInputs = [ pkgs.removeReferencesTo ];
+            postInstall = ''
+              remove-references-to -t ${pkgs.mailcap} $out/bin/attestation-server
+              remove-references-to -t ${pkgs.iana-etc} $out/bin/attestation-server
+              remove-references-to -t ${pkgs.tzdata} $out/bin/attestation-server
+            '';
+            disallowedReferences = [ pkgs.mailcap pkgs.iana-etc pkgs.tzdata ];
           };
           default = attestation-server;
 
