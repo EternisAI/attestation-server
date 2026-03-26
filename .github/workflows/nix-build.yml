@@ -18,6 +18,8 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@9a59e15a74545c99a626ba594edcd0d02189e670 # main at 2026-03-20T13:57:34Z
+        with:
+          summarize: false
 
       - name: Build
         run: nix build .#docker-image
