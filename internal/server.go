@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -51,6 +52,7 @@ type Server struct {
 	crlCache         *crlCache
 	tdxGetter        *cachedHTTPSGetter
 	dnssecResolver   *dnssec.Resolver
+	ready            atomic.Bool
 }
 
 // NewServer constructs a Server with middleware and routes configured.
@@ -411,6 +413,8 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	if s.crlCache != nil {
 		go s.runCRLRefresh(ctx)
+	} else {
+		s.ready.Store(true)
 	}
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.BindHost, s.cfg.BindPort)
@@ -516,6 +520,9 @@ func (s *Server) accessLog() fiber.Handler {
 // to /api/v1/attestation because attestation involves blocking TEE
 // hardware operations. Future lightweight endpoints should not inherit it.
 func (s *Server) setupRoutes() {
+	s.app.Get("/healthz/live", s.handleLive)
+	s.app.Get("/healthz/ready", s.handleReady)
+
 	handlers := []fiber.Handler{}
 	if s.rateLimitHandler != nil {
 		handlers = append(handlers, s.rateLimitHandler)

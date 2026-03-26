@@ -154,13 +154,16 @@ func (c *crlCache) refreshAll(ctx context.Context, client *http.Client, urls []s
 func (s *Server) runCRLRefresh(ctx context.Context) {
 	urls := crlURLsForEvidence(s.cfg)
 	if len(urls) == 0 {
+		s.ready.Store(true)
 		return
 	}
 
 	client := s.fetchHTTPClient()
 
-	// Initial fetch.
+	// Initial fetch — once complete the server is ready to serve traffic.
 	s.crlCache.refreshAll(ctx, client, urls)
+	s.ready.Store(true)
+	s.logger.Info("initial crl fetch complete, server ready")
 
 	ticker := time.NewTicker(s.cfg.RevocationRefreshInterval)
 	defer ticker.Stop()
