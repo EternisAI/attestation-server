@@ -119,6 +119,9 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if endorsementTimeout == 0 {
+		return nil, fmt.Errorf("endorsements.client.timeout: must be positive")
+	}
 	httpCacheSize, err := parseByteSize(viper.GetString("http.cache.size"))
 	if err != nil {
 		return nil, fmt.Errorf("http.cache.size: %w", err)
@@ -131,9 +134,15 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if revocationRefreshInterval == 0 {
+		return nil, fmt.Errorf("revocation.refresh_interval: must be positive")
+	}
 	rateLimitStallTimeout, err := parseDuration("ratelimit.stall_timeout")
 	if err != nil {
 		return nil, err
+	}
+	if rateLimitStallTimeout == 0 {
+		return nil, fmt.Errorf("ratelimit.stall_timeout: must be positive")
 	}
 
 	cosignBuildSigner := CosignBuildSignerConfig{
