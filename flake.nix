@@ -46,7 +46,13 @@
           docker-image = pkgs.dockerTools.streamLayeredImage {
             name = "ghcr.io/eternisai/attestation-server";
             tag = "latest";
-            contents = [ attestation-server pkgs.cacert ];
+            contents = [
+              attestation-server
+              (pkgs.runCommand "attestation-server-link" {} ''
+                mkdir -p $out/usr/local/bin
+                ln -s ${attestation-server}/bin/attestation-server $out/usr/local/bin/attestation-server
+              '')
+            ];
             config = {
               Entrypoint = [ "${attestation-server}/bin/attestation-server" ];
             };

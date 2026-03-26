@@ -423,7 +423,7 @@ The project provides a Nix flake for reproducible, hermetic builds. Inputs are p
 
 The flake exposes two package targets:
 - `default` / `attestation-server` — the statically linked binary
-- `docker-image` — a minimal OCI image (`streamLayeredImage`) containing the binary and CA certificates, used by the release workflow and downstream Nitro TEE EIF builds
+- `docker-image` — a minimal OCI image (`streamLayeredImage`) containing the binary (TLS root CAs are compiled in via `x509roots/fallback`) and a `/usr/local/bin/attestation-server` symlink for use in multi-stage Docker builds, used by the release workflow and downstream Nitro TEE EIF builds
 
 The flake is designed to be referenced as a GitHub source input from downstream TEE image repositories:
 
