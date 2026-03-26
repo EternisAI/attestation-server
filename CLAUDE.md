@@ -43,7 +43,7 @@ release-please-config.json # Release Please configuration (changelog sections, v
 
 ## Configuration
 
-Configuration is loaded via a TOML config file, environment variables, and CLI flags. Priority (highest to lowest): CLI flags > env vars > config file > defaults.
+Configuration is loaded via a TOML config file, environment variables, and CLI flags. Priority (highest to lowest): CLI flags > env vars > config file > defaults. `LoadConfig` validates all values at startup: duration fields reject negative values (`parseDuration`), timeout and interval fields (`endorsements.client.timeout`, `revocation.refresh_interval`, `ratelimit.stall_timeout`) additionally reject zero, byte-size fields use `dustin/go-humanize` for parsing with int64 overflow protection, and invalid durations or byte sizes fail the startup.
 
 ### Config file
 
@@ -421,7 +421,7 @@ Fixture files:
 
 ## Nix build
 
-The project provides a Nix flake for reproducible, hermetic builds. Inputs are pinned to exact commit hashes in `flake.nix` and locked in `flake.lock`. The flake builds a statically linked binary (`CGO_ENABLED=0`, stripped with `-s -w`). Tests run during the build (live DNSSEC tests skip themselves in the sandbox since `DNSSEC_LIVE_TEST` is unset; all other tests use fixtures). The source filter includes `*.go`, `*.json` (test fixtures), `go.mod`, and `go.sum` — changes to docs or config do not trigger a rebuild.
+The project provides a Nix flake for reproducible, hermetic builds. Inputs are pinned to exact commit hashes in `flake.nix` and locked in `flake.lock`. The flake builds a statically linked binary (`CGO_ENABLED=0`, stripped with `-s -w`). Tests run during the build (live DNSSEC tests skip themselves in the sandbox since `DNSSEC_LIVE_TEST` is unset; all other tests use fixtures). The source filter includes `*.go`, `*.json` (test fixtures), `go.mod`, and `go.sum` — changes to docs or config do not trigger a rebuild. Runtime closure references to nixpkgs-patched `mailcap`, `iana-etc`, and `tzdata` store paths are stripped via `removeReferencesTo` (the server does not use `mime.TypeByExtension`, `net.LookupPort`, or `time.LoadLocation`), keeping the Docker image minimal.
 
 The flake exposes two package targets:
 - `default` / `attestation-server` — the statically linked binary
