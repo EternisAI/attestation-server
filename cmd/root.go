@@ -51,7 +51,7 @@ func initConfig() {
 	// Defaults
 	viper.SetDefault("log.format", "json")
 	viper.SetDefault("log.level", "info")
-	viper.SetDefault("server.host", "0.0.0.0")
+	viper.SetDefault("server.host", "127.0.0.1")
 	viper.SetDefault("server.port", 8187)
 	viper.SetDefault("paths.build_info", "/etc/build-info.json")
 	viper.SetDefault("paths.endorsements", "/etc/endorsements.json")

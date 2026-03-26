@@ -61,7 +61,7 @@ format = "json"
 level  = "info"
 
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 8187
 
 [paths]
@@ -150,7 +150,7 @@ All settings can be configured via environment variables prefixed with `ATTESTAT
 | `ATTESTATION_SERVER_CONFIG_FILE` | — | — | Path to TOML config file |
 | `ATTESTATION_SERVER_LOG_FORMAT` | `log.format` | `json` | Log format: `json`/`text` |
 | `ATTESTATION_SERVER_LOG_LEVEL` | `log.level` | `info` | Log level: `debug`/`info`/`warn`/`error` |
-| `ATTESTATION_SERVER_SERVER_HOST` | `server.host` | `0.0.0.0` | HTTP bind host |
+| `ATTESTATION_SERVER_SERVER_HOST` | `server.host` | `127.0.0.1` | HTTP bind host |
 | `ATTESTATION_SERVER_SERVER_PORT` | `server.port` | `8187` | HTTP bind port |
 | `ATTESTATION_SERVER_PATHS_BUILD_INFO` | `paths.build_info` | `/etc/build-info.json` | Path to build information file |
 | `ATTESTATION_SERVER_PATHS_ENDORSEMENTS` | `paths.endorsements` | `/etc/endorsements.json` | Path to endorsements URL list file |
