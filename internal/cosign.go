@@ -131,7 +131,7 @@ func (s *Server) fetchCosignSignatures(ctx context.Context, urls []*url.URL, cli
 			ttl = t
 		}
 	}
-	if ttl <= 0 {
+	if ttl < 0 {
 		ttl = s.cfg.HTTPCacheDefaultTTL
 	}
 
