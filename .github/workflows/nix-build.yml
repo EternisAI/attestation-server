@@ -3,6 +3,11 @@ name: Nix Build
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "**/*.md"
+      - LICENSE
+      - NOTICE
 
 permissions: {}
 

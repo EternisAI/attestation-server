@@ -439,9 +439,9 @@ When `go.mod` or `go.sum` change, the `vendorHash` in `flake.nix` must be update
 
 ## CI/CD
 
-- **CI** (`.github/workflows/ci.yml`) — runs on pushes to non-main branches: `go fmt` check, `go test` with `DNSSEC_LIVE_TEST=1`, `go vet`, `go build`.
-- **Nix Build** (`.github/workflows/nix-build.yml`) — runs on PRs targeting main: `nix build .#docker-image` (runs offline test suite via `doCheck`). Catches flake breakage before merge.
-- Branch protection on main should require both `Test` and `Build` status checks to pass.
+- **CI** (`.github/workflows/ci.yml`) — runs on pushes to non-main branches: `go fmt` check, `go test` with `DNSSEC_LIVE_TEST=1`, `go vet`, `go build`. Skipped for doc-only changes (`*.md`, `LICENSE`, `NOTICE`).
+- **Nix Build** (`.github/workflows/nix-build.yml`) — runs on PRs targeting main: `nix build .#docker-image` (runs offline test suite via `doCheck`). Catches flake breakage before merge. Skipped for doc-only changes (`*.md`, `LICENSE`, `NOTICE`).
+- Branch protection on main should require both `Test` and `Build` status checks to pass. If using GitHub rulesets, mark them as "skippable" so doc-only PRs are not blocked when the Nix Build workflow is skipped by `paths-ignore`.
 - **Release** (`.github/workflows/release.yml`) — runs on push to main, three sequential jobs:
   1. **Build** — `nix build .#docker-image` (runs tests via `doCheck`), uploads image tarball as artifact
   2. **Release** — Release Please creates/updates a release PR; on merge, creates a GitHub Release + tag
