@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -874,6 +875,46 @@ func TestValidateOwnEndorsements_SkipValidation_MismatchStillFails(t *testing.T)
 	}
 	if !contains(err.Error(), "mismatch") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateOwnEndorsements_SkipValidation_PostFetchVerificationFailureNotSkipped(t *testing.T) {
+	// Serve invalid JSON — the HTTP fetch succeeds but parsing fails.
+	// This is a verification/parsing error, not a retrieval error, so
+	// skip_validation must NOT suppress it.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`not valid json`))
+	}))
+	defer srv.Close()
+
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := url.Parse(srv.URL + "/e.json")
+	s := &Server{
+		cfg: &Config{
+			EndorsementClientTimeout:  5 * time.Second,
+			EndorsementSkipValidation: true,
+		},
+		logger:    slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		httpCache: cache,
+	}
+
+	// Use resolveEndorsementsWithClient directly with the test server's TLS
+	// client (validateOwnEndorsements creates its own client that won't trust
+	// the httptest certificate). The error classification is the same either way.
+	_, _, resolveErr := s.resolveEndorsementsWithClient(context.Background(), []*url.URL{u}, srv.Client())
+	if resolveErr == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+	var retrieval *errEndorsementRetrieval
+	if errors.As(resolveErr, &retrieval) {
+		t.Fatalf("post-fetch parse error must not be classified as retrieval: %v", resolveErr)
+	}
+	if !contains(resolveErr.Error(), "parsing") {
+		t.Errorf("expected parsing error, got: %v", resolveErr)
 	}
 }
 

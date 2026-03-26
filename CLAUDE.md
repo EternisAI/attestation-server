@@ -160,11 +160,11 @@ When cosign is enabled, endorsement URLs are required (own and dependencies).
 
 ### Endorsement skip validation
 
-`endorsements.skip_validation` (default `false`) makes endorsement *retrieval* failures non-fatal — if endorsement documents cannot be fetched, errors are logged as warnings and attestation proceeds without endorsement verification. If endorsements are successfully retrieved, measurement comparison is always performed and mismatches always fail regardless of this flag. Intended for disaster recovery when endorsement infrastructure is unavailable. Logs a startup warning that security is weakened. The skip logic lives inside `validateOwnEndorsements` and `validateDependencyEndorsements`, at the `resolveEndorsements` call boundary.
+`endorsements.skip_validation` (default `false`) makes endorsement *retrieval* failures non-fatal — if endorsement documents cannot be fetched, errors are logged as warnings and attestation proceeds without endorsement verification. If endorsements are successfully retrieved, measurement comparison is always performed and mismatches always fail regardless of this flag. Intended for disaster recovery when endorsement-serving infrastructure is unavailable. Logs a startup warning that security is weakened. Network fetch errors in `fetchEndorsementDocumentsWithClient` and `fetchCosignSignatures` are wrapped as `*errEndorsementRetrieval`; verification/parsing errors (byte-for-byte mismatch, JSON parse, cosign bundle verification) are not. `validateOwnEndorsements` and `validateDependencyEndorsements` use `errors.As` to skip only retrieval errors.
 
 ### Startup self-attestation
 
-`NewServer` calls `Attest` with random nonce on each TEE device. Parsed results captured in `parsedSelfAttestation` for endorsement validation. Exits on failure (unless `endorsements.skip_validation` is enabled).
+`NewServer` calls `Attest` with random nonce on each TEE device. Parsed results captured in `parsedSelfAttestation` for endorsement validation. Device open and `Attest` failures always exit the server. Only the subsequent endorsement retrieval/validation step can be bypassed when `endorsements.skip_validation` is enabled.
 
 ### Endorsement document format
 

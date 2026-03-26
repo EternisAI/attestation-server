@@ -110,11 +110,11 @@ Before collecting evidence for each request, the handler calls `validateOwnEndor
 
 ### Skip validation mode
 
-When `endorsements.skip_validation` is enabled (default `false`), endorsement *retrieval* failures are logged as warnings instead of causing errors. This is intended for disaster recovery when the endorsement serving infrastructure is completely unavailable but service operations must be restored. The server logs a startup warning that security is weakened.
+When `endorsements.skip_validation` is enabled (default `false`), endorsement *retrieval* failures are logged as warnings instead of causing errors. This is intended for disaster recovery when the endorsement-serving infrastructure is completely unavailable but service operations must be restored. The server logs a startup warning that security is weakened.
 
 **Only retrieval failures are skipped.** If endorsement documents are successfully fetched, measurement comparison is always performed — a mismatch between the endorsed golden values and the actual TEE evidence is a hard error regardless of this flag. This ensures that a TEE running modified code cannot pass attestation when endorsements are available.
 
-The skip boundary is the `resolveEndorsements` call inside `validateOwnEndorsements` and `validateDependencyEndorsements`. Errors from endorsement document fetching, cosign signature fetching, or cosign bundle verification are treated as retrieval failures (skippable). Errors from cosign OID validation and measurement comparison are never skipped.
+Network fetch errors from `fetchEndorsementDocumentsWithClient` and `fetchCosignSignatures` are wrapped as `*errEndorsementRetrieval`. Verification and parsing errors — byte-for-byte mismatch across providers, endorsement JSON parse failure, cosign bundle verification failure — are not wrapped. `validateOwnEndorsements` and `validateDependencyEndorsements` use `errors.As` to detect `*errEndorsementRetrieval` and only skip those when the flag is enabled. Cosign OID validation and measurement comparison errors are never skipped (they occur after `resolveEndorsements` returns successfully).
 
 ### Endorsement domain allowlist
 
