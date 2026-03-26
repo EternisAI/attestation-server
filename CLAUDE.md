@@ -66,6 +66,8 @@ All TOML settings map to env vars prefixed with `ATTESTATION_SERVER_`, with `.` 
 
 List-typed variables (`REPORT_USER_DATA_ENV`, `DEPENDENCIES_ENDPOINTS`, `ENDORSEMENTS_ALLOWED_DOMAINS`) support comma-separated values with trimmed spaces: `VAR=a,b,c`.
 
+**When adding a new config setting**, three places must be updated in addition to `internal/config.go`: add a `viper.SetDefault` and a `viper.BindEnv` call in `cmd/root.go`, and add the default value in `config/config.toml`. Without the explicit `BindEnv` call the environment variable will be silently ignored.
+
 ## Logging conventions
 
 - Use `log/slog` throughout; never `fmt.Print*` or `log.*`.
@@ -156,9 +158,13 @@ When cosign is enabled, endorsement URLs are required (own and dependencies).
 
 `/healthz/live` returns 200 once the HTTP listener is up. `/healthz/ready` returns 200 after `NewServer` (self-attestation, endorsement validation) and the initial CRL fetch (if configured) complete; 503 before that. Readiness is a one-way transition — no runtime condition (cert reload failure, CRL refresh failure) flips it back because all background processes use fail-safe/fail-open semantics. Health routes are not rate-limited.
 
+### Endorsement skip validation
+
+`endorsements.skip_validation` (default `false`) makes endorsement *retrieval* failures non-fatal — if endorsement documents cannot be fetched, errors are logged as warnings and attestation proceeds without endorsement verification. If endorsements are successfully retrieved, measurement comparison is always performed and mismatches always fail regardless of this flag. Intended for disaster recovery when endorsement infrastructure is unavailable. Logs a startup warning that security is weakened. The skip logic lives inside `validateOwnEndorsements` and `validateDependencyEndorsements`, at the `resolveEndorsements` call boundary.
+
 ### Startup self-attestation
 
-`NewServer` calls `Attest` with random nonce on each TEE device. Parsed results captured in `parsedSelfAttestation` for endorsement validation. Exits on failure.
+`NewServer` calls `Attest` with random nonce on each TEE device. Parsed results captured in `parsedSelfAttestation` for endorsement validation. Exits on failure (unless `endorsements.skip_validation` is enabled).
 
 ### Endorsement document format
 

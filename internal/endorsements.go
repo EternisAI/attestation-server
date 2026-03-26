@@ -197,9 +197,15 @@ func (s *Server) validateOwnEndorsements(ctx context.Context) error {
 
 	doc, cr, err := s.resolveEndorsements(ctx, s.endorsements)
 	if err != nil {
+		if s.cfg.EndorsementSkipValidation {
+			s.logger.Warn("endorsement retrieval failed, skipping validation because skip_validation is enabled", "error", err)
+			return nil
+		}
 		return err
 	}
 
+	// Endorsements were successfully retrieved — measurement comparison
+	// errors are never skipped, even with skip_validation enabled.
 	if cr != nil {
 		if err := s.validateCosignOIDs(cr, s.buildInfo); err != nil {
 			return fmt.Errorf("cosign: %w", err)
@@ -290,6 +296,10 @@ func (s *Server) validateDependencyEndorsements(ctx context.Context, report *Att
 
 	edp, cr, err := s.resolveEndorsements(ctx, urls)
 	if err != nil {
+		if s.cfg.EndorsementSkipValidation {
+			s.logger.Warn("dependency endorsement retrieval failed, skipping validation because skip_validation is enabled", "error", err)
+			return nil
+		}
 		return err
 	}
 	doc := *edp

@@ -814,6 +814,69 @@ func TestValidateOwnEndorsements_CacheHitMismatch(t *testing.T) {
 	}
 }
 
+func TestValidateOwnEndorsements_SkipValidation_RetrievalFailure(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := url.Parse("https://unreachable.example.com/e.json")
+	s := &Server{
+		cfg: &Config{
+			ReportEvidence:            EvidenceConfig{SEVSNP: true},
+			EndorsementClientTimeout:  time.Second,
+			EndorsementSkipValidation: true,
+		},
+		logger:       slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		endorsements: []*url.URL{u},
+		httpCache:    cache,
+		selfAttestation: &parsedSelfAttestation{
+			sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := s.validateOwnEndorsements(ctx); err != nil {
+		t.Fatalf("expected nil error with skip_validation on retrieval failure, got: %v", err)
+	}
+}
+
+func TestValidateOwnEndorsements_SkipValidation_MismatchStillFails(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hex := strings.Repeat("00", 48) // wrong measurement
+	doc := &EndorsementDocument{SEVSNP: &hex}
+	cache.setGroup([]string{"https://example.com/e.json"}, doc, 100, time.Minute)
+
+	u, _ := url.Parse("https://example.com/e.json")
+	s := &Server{
+		cfg: &Config{
+			ReportEvidence:            EvidenceConfig{SEVSNP: true},
+			EndorsementClientTimeout:  5 * time.Second,
+			EndorsementSkipValidation: true,
+		},
+		logger:       slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		endorsements: []*url.URL{u},
+		httpCache:    cache,
+		selfAttestation: &parsedSelfAttestation{
+			sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
+		},
+	}
+
+	err = s.validateOwnEndorsements(context.Background())
+	if err == nil {
+		t.Fatal("expected error: measurement mismatch must not be skipped even with skip_validation")
+	}
+	if !contains(err.Error(), "mismatch") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // --- resolveEndorsements ---
 
 func TestResolveEndorsements_CacheHit(t *testing.T) {
@@ -1490,6 +1553,83 @@ func TestValidateDependencyEndorsements_TPMNoEndorsement(t *testing.T) {
 		t.Fatal("expected error when TPM data has no endorsement")
 	}
 	if !contains(err.Error(), "tpm") || !contains(err.Error(), "no measurements") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- skip_validation: dependency endorsement tests ---
+
+func TestValidateDependencyEndorsements_SkipValidation_RetrievalFailure(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reportData := &AttestationReportData{
+		Endorsements: []string{"https://unreachable.example.com/e.json"},
+	}
+	dataJSON, _ := json.Marshal(reportData)
+	report := &AttestationReport{
+		Evidence: []*AttestationEvidence{{Kind: "sevsnp", Blob: []byte("fake")}},
+		Data:     json.RawMessage(dataJSON),
+	}
+
+	s := &Server{
+		cfg: &Config{
+			EndorsementClientTimeout:  time.Second,
+			EndorsementSkipValidation: true,
+		},
+		logger:    slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		httpCache: cache,
+	}
+	parsed := &parsedDependencyEvidence{
+		sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := s.validateDependencyEndorsements(ctx, report, parsed); err != nil {
+		t.Fatalf("expected nil error with skip_validation on retrieval failure, got: %v", err)
+	}
+}
+
+func TestValidateDependencyEndorsements_SkipValidation_MismatchStillFails(t *testing.T) {
+	cache, err := newFetcherCache(100 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hex := strings.Repeat("00", 48)
+	doc := &EndorsementDocument{SEVSNP: &hex}
+	cache.setGroup([]string{"https://dep.example.com/e.json"}, doc, 100, time.Minute)
+
+	reportData := &AttestationReportData{
+		Endorsements: []string{"https://dep.example.com/e.json"},
+	}
+	dataJSON, _ := json.Marshal(reportData)
+	report := &AttestationReport{
+		Evidence: []*AttestationEvidence{{Kind: "sevsnp", Blob: []byte("fake")}},
+		Data:     json.RawMessage(dataJSON),
+	}
+
+	s := &Server{
+		cfg: &Config{
+			EndorsementClientTimeout:  5 * time.Second,
+			EndorsementSkipValidation: true,
+		},
+		logger:    slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		httpCache: cache,
+	}
+	parsed := &parsedDependencyEvidence{
+		sevSNPReport: &spb.Report{Measurement: bytes.Repeat([]byte{0xdd}, 48)},
+	}
+
+	err = s.validateDependencyEndorsements(context.Background(), report, parsed)
+	if err == nil {
+		t.Fatal("expected error: measurement mismatch must not be skipped even with skip_validation")
+	}
+	if !contains(err.Error(), "mismatch") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

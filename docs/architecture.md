@@ -181,6 +181,8 @@ At startup, the server fetches endorsement documents from all configured URLs, v
 
 Per-request, endorsements are re-validated from cache (ristretto, TTL from Cache-Control headers, capped at 24h). On cache miss, documents are re-fetched and revalidated. If revalidation fails, the handler returns 500 but the server stays up and self-heals when endorsements become available.
 
+When `endorsements.skip_validation` is enabled (default `false`), endorsement *retrieval* failures are demoted to warnings — the server starts and serves attestation responses without endorsed measurement verification. If endorsements are successfully retrieved, measurement comparison is always enforced regardless of this flag. This is a disaster recovery mechanism for when the endorsement infrastructure is completely unavailable; it weakens security guarantees and should be disabled as soon as endorsement service is restored.
+
 ### Endorsement document format
 
 ```jsonc

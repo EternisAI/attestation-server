@@ -106,6 +106,10 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 	}
 	logger.Debug("loaded endorsements", "count", len(endorsements), "urls", strings.Join(endorsementStrs, ","))
 
+	if cfg.EndorsementSkipValidation {
+		logger.Warn("endorsement validation is disabled, attestation will proceed without endorsement verification — security is weakened")
+	}
+
 	if len(endorsements) > 0 {
 		if !cfg.CosignVerify {
 			logger.Warn("cosign verification is disabled, endorsement documents are not cryptographically authenticated")
