@@ -19,6 +19,7 @@ internal/dependencies.go   # Transitive dependency attestation (package app)
 internal/cosign.go         # Cosign signature verification (package app)
 internal/endorsements.go   # Endorsement fetching, validation, cosign integration (package app)
 internal/fetch.go          # HTTP fetch with retry, cache (ristretto), TTL parsing (package app)
+internal/health.go         # /healthz/live and /healthz/ready handlers (package app)
 internal/logging.go        # NewLogger() (package app)
 internal/server.go         # Server, NewServer(), Run() (package app)
 internal/tls.go            # TLS cert/CA loading, verification, hot-reload (package app)
@@ -150,6 +151,10 @@ When cosign is enabled, endorsement URLs are required (own and dependencies).
 - **SEV-SNP**: Background CRL fetch from AMD KDS (fail-open if no data yet). Initialized when local SEV-SNP evidence or dependency endpoints are configured.
 - **TDX**: Delegated to go-tdx-guest with `cachedHTTPSGetter` backed by shared ristretto cache.
 - **Nitro**: No CRL mechanism (ephemeral cert chains; AWS handles revocation).
+
+### Health checks
+
+`/healthz/live` returns 200 once the HTTP listener is up. `/healthz/ready` returns 200 after `NewServer` (self-attestation, endorsement validation) and the initial CRL fetch (if configured) complete; 503 before that. Readiness is a one-way transition — no runtime condition (cert reload failure, CRL refresh failure) flips it back because all background processes use fail-safe/fail-open semantics. Health routes are not rate-limited.
 
 ### Startup self-attestation
 
