@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/EternisAI/attestation-server/compare/v1.3.0...v1.3.1) (2026-03-26)
+
+
+### Bug Fixes
+
+* add Cache-Control no-store header to attestation responses ([#12](https://github.com/EternisAI/attestation-server/issues/12)) ([ad6f959](https://github.com/EternisAI/attestation-server/commit/ad6f95988668bc9c255083a7249728aac892b1c7))
+
 ## [1.3.0](https://github.com/EternisAI/attestation-server/compare/v1.2.0...v1.3.0) (2026-03-26)
 
 
