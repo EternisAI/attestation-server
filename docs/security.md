@@ -207,7 +207,7 @@ The server distinguishes between internal and external error messages:
 
 - **E2E encryption failures** (missing/mismatched client certificate): a descriptive message is logged for debugging, but an opaque error is returned to the caller
 - **Dependency URLs**: not included in error responses to callers
-- **Upstream error classification**: timeout errors map to 504, connection errors to 503, everything else to 500 — without exposing internal details
+- **Upstream error classification**: timeout errors map to 504, transport errors (connection refused, reset, DNS) to 503, everything else (including TLS certificate verification failures) to 500 — without exposing internal details
 - **5xx responses**: all server errors return a generic `"internal error"` message; the real error is logged at ERROR level with request_id for debugging. 4xx errors preserve their message since they describe client-fixable problems
 
 ## Build info integrity

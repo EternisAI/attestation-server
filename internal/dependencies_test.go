@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"crypto/sha512"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -820,6 +822,10 @@ func TestUpstreamErrorCode(t *testing.T) {
 		{"timeout error", &errTimeout{err: fmt.Errorf("dial timeout")}, 504},
 		{"connection error", &errConnection{err: fmt.Errorf("connection refused")}, 503},
 		{"generic error", fmt.Errorf("something failed"), 500},
+		{"tls cert error", wrapUpstreamError(classifyNetError(
+			&url.Error{Op: "Get", URL: "https://dep:8443", Err: &tls.CertificateVerificationError{
+				Err: x509.CertificateInvalidError{Reason: x509.Expired},
+			}}), "dependency failed"), 500},
 		{"wrapped timeout", fmt.Errorf("outer: %w", &errTimeout{err: fmt.Errorf("inner timeout")}), 504},
 		{"wrapped connection", fmt.Errorf("outer: %w", &errConnection{err: fmt.Errorf("inner conn")}), 503},
 	}
@@ -853,6 +859,45 @@ func TestClassifyNetError(t *testing.T) {
 		var ce *errConnection
 		if !errors.As(err, &ce) {
 			t.Errorf("expected *errConnection, got %T", err)
+		}
+	})
+
+	t.Run("tls cert verification error is not classified as connection", func(t *testing.T) {
+		// Simulates the error chain: *url.Error wrapping *tls.CertificateVerificationError
+		// (e.g. expired cert). Should NOT become *errConnection.
+		tlsErr := &tls.CertificateVerificationError{
+			Err: x509.CertificateInvalidError{Reason: x509.Expired},
+		}
+		urlErr := &url.Error{Op: "Get", URL: "https://dep:8443", Err: tlsErr}
+		err := classifyNetError(urlErr)
+		var ce *errConnection
+		if errors.As(err, &ce) {
+			t.Error("TLS cert verification error should not be classified as *errConnection")
+		}
+		var te *errTimeout
+		if errors.As(err, &te) {
+			t.Error("TLS cert verification error should not be classified as *errTimeout")
+		}
+	})
+
+	t.Run("tls unknown authority error is not classified as connection", func(t *testing.T) {
+		tlsErr := &tls.CertificateVerificationError{
+			Err: x509.UnknownAuthorityError{},
+		}
+		urlErr := &url.Error{Op: "Get", URL: "https://dep:8443", Err: tlsErr}
+		err := classifyNetError(urlErr)
+		var ce *errConnection
+		if errors.As(err, &ce) {
+			t.Error("TLS unknown authority error should not be classified as *errConnection")
+		}
+	})
+
+	t.Run("url error without tls cert error is still connection", func(t *testing.T) {
+		// Non-TLS url.Error (e.g. connection refused) should still be *errConnection.
+		err := classifyNetError(&url.Error{Op: "Get", URL: "http://x", Err: fmt.Errorf("connection refused")})
+		var ce *errConnection
+		if !errors.As(err, &ce) {
+			t.Errorf("expected *errConnection for non-TLS url error, got %T", err)
 		}
 	})
 

@@ -35,9 +35,11 @@ type errTimeout struct{ err error }
 func (e *errTimeout) Error() string { return e.err.Error() }
 func (e *errTimeout) Unwrap() error { return e.err }
 
-// errConnection indicates a non-timeout connection error with an upstream
-// server (connection refused, reset, TLS failure). The handler maps this
-// to HTTP 503 Service Unavailable.
+// errConnection indicates a non-timeout transport error with an upstream
+// server (connection refused, reset, DNS failure). The handler maps this
+// to HTTP 503 Service Unavailable. TLS certificate verification errors
+// are excluded — those are configuration problems, not transient
+// connectivity issues, and map to 500 instead.
 type errConnection struct{ err error }
 
 func (e *errConnection) Error() string { return e.err.Error() }
@@ -45,7 +47,8 @@ func (e *errConnection) Unwrap() error { return e.err }
 
 // classifyNetError wraps an HTTP client error as *errTimeout or
 // *errConnection based on the underlying cause. Errors that don't match
-// either category (e.g. context.Canceled) are returned as-is.
+// either category (e.g. context.Canceled, TLS certificate verification
+// failures) are returned as-is so they map to 500.
 func classifyNetError(err error) error {
 	if err == nil {
 		return nil
@@ -56,6 +59,15 @@ func classifyNetError(err error) error {
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return &errTimeout{err: err}
+	}
+	// TLS certificate verification errors (expired cert, unknown CA,
+	// hostname mismatch) are configuration problems, not transient
+	// connectivity issues. Return as-is so they map to 500 instead
+	// of 503. This check must come before the *url.Error catch-all
+	// since *url.Error wraps all HTTP client failures.
+	var tlsCertErr *tls.CertificateVerificationError
+	if errors.As(err, &tlsCertErr) {
+		return err
 	}
 	var urlErr *url.Error
 	var opErr *net.OpError
