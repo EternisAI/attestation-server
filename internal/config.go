@@ -314,12 +314,15 @@ func parseLogLevel(s string) slog.Level {
 }
 
 // parseDuration reads a viper string key and parses it as a time.Duration.
-// Returns an error if the value is empty or unparseable.
+// Returns an error if the value is empty, unparseable, or negative.
 func parseDuration(key string) (time.Duration, error) {
 	s := viper.GetString(key)
 	d, err := time.ParseDuration(s)
 	if err != nil {
 		return 0, fmt.Errorf("%s: invalid duration %q: %w", key, s, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s: negative duration %q", key, s)
 	}
 	return d, nil
 }

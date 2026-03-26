@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/spf13/viper"
 )
 
 func TestValidateEvidence(t *testing.T) {
@@ -742,6 +743,68 @@ func TestCheckEndorsementDomain(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestParseDuration(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr string
+	}{
+		{name: "valid duration", value: "10s"},
+		{name: "zero duration", value: "0s"},
+		{name: "empty string", value: "", wantErr: "invalid duration"},
+		{name: "unparseable", value: "5xs", wantErr: "invalid duration"},
+		{name: "negative duration", value: "-5s", wantErr: "negative duration"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := "test.parse_duration." + tt.name
+			viper.Set(key, tt.value)
+			defer viper.Set(key, nil)
+
+			d, err := parseDuration(key)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error %q does not contain %q", err.Error(), tt.wantErr)
+				}
+				if !contains(err.Error(), key) {
+					t.Fatalf("error %q does not contain key %q", err.Error(), key)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if d < 0 {
+				t.Fatalf("parseDuration(%q) = %v, want non-negative", tt.value, d)
+			}
+		})
+	}
+}
+
+func TestParseByteSizeOverflow(t *testing.T) {
+	_, err := parseByteSize("9EiB")
+	if err == nil {
+		t.Fatal("expected error for int64 overflow, got nil")
+	}
+	if !contains(err.Error(), "overflows") {
+		t.Fatalf("error %q does not contain %q", err.Error(), "overflows")
+	}
+}
+
+func TestParseByteSizeEmpty(t *testing.T) {
+	_, err := parseByteSize("")
+	if err == nil {
+		t.Fatal("expected error for empty input, got nil")
+	}
+	if !contains(err.Error(), "empty") {
+		t.Fatalf("error %q does not contain %q", err.Error(), "empty")
 	}
 }
 
