@@ -6,10 +6,10 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/spf13/viper"
 )
@@ -308,49 +308,20 @@ func parseLogLevel(s string) slog.Level {
 	}
 }
 
-// parseByteSize parses a human-readable byte size string like "100MiB" or
-// "1GiB" into a byte count. Supported suffixes: B, KiB, MiB, GiB, TiB
-// (case-insensitive). A bare number without suffix is treated as bytes.
+// parseByteSize parses a human-readable byte size string into a byte count
+// using github.com/dustin/go-humanize. Supports both SI (KB, MB, GB, TB) and
+// IEC (KiB, MiB, GiB, TiB) suffixes, fractional values, and flexible
+// whitespace.
 func parseByteSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, fmt.Errorf("empty byte size")
 	}
-
-	suffixes := []struct {
-		suffix     string
-		multiplier int64
-	}{
-		{"TiB", 1 << 40},
-		{"GiB", 1 << 30},
-		{"MiB", 1 << 20},
-		{"KiB", 1 << 10},
-		{"B", 1},
-	}
-
-	lower := strings.ToLower(s)
-	for _, sf := range suffixes {
-		if strings.HasSuffix(lower, strings.ToLower(sf.suffix)) {
-			numStr := strings.TrimSpace(s[:len(s)-len(sf.suffix)])
-			n, err := strconv.ParseInt(numStr, 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
-			}
-			if n < 0 {
-				return 0, fmt.Errorf("negative byte size %q", s)
-			}
-			return n * sf.multiplier, nil
-		}
-	}
-
-	n, err := strconv.ParseInt(s, 10, 64)
+	n, err := humanize.ParseBytes(s)
 	if err != nil {
 		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
 	}
-	if n < 0 {
-		return 0, fmt.Errorf("negative byte size %q", s)
-	}
-	return n, nil
+	return int64(n), nil
 }
 
 // domainNameRe matches valid DNS domain names (no ports, no paths).

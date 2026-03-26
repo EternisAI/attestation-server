@@ -443,13 +443,26 @@ func TestParseByteSize(t *testing.T) {
 		want      int64
 		wantError bool
 	}{
+		// IEC (binary) suffixes
 		{"100MiB", 100 << 20, false},
 		{"1GiB", 1 << 30, false},
 		{"512KiB", 512 << 10, false},
 		{"1024B", 1024, false},
 		{"2TiB", 2 << 40, false},
+		// SI (decimal) suffixes
+		{"100MB", 100_000_000, false},
+		{"1GB", 1_000_000_000, false},
+		{"512KB", 512_000, false},
+		{"2TB", 2_000_000_000_000, false},
+		// Bare number (bytes)
 		{"42", 42, false},
 		{"0", 0, false},
+		// Whitespace
+		{" 10 MiB ", 10 << 20, false},
+		// Case insensitive
+		{"100mib", 100 << 20, false},
+		{"1gib", 1 << 30, false},
+		// Errors
 		{"", 0, true},
 		{"abc", 0, true},
 		{"-1MiB", 0, true},
@@ -1583,6 +1596,9 @@ func FuzzParseCacheTTL(f *testing.F) {
 func FuzzParseByteSize(f *testing.F) {
 	f.Add("100MiB")
 	f.Add("1GiB")
+	f.Add("100MB")
+	f.Add("1.5GiB")
+	f.Add(" 10 MiB ")
 	f.Add("")
 	f.Add("0")
 	f.Add("-1")
