@@ -474,6 +474,7 @@ func TestParseByteSize(t *testing.T) {
 		{"abc", 0, true},
 		{"-1MiB", 0, true},
 		{"-5", 0, true},
+		{"9EiB", 0, true}, // overflows int64
 	}
 
 	for _, tt := range tests {

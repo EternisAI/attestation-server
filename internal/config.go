@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -335,6 +336,9 @@ func parseByteSize(s string) (int64, error) {
 	n, err := humanize.ParseBytes(s)
 	if err != nil {
 		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
+	}
+	if n > uint64(math.MaxInt64) {
+		return 0, fmt.Errorf("byte size %q overflows int64", s)
 	}
 	return int64(n), nil
 }
