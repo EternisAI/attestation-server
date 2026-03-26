@@ -381,9 +381,9 @@ func TestParseCacheTTL(t *testing.T) {
 			want:    0,
 		},
 		{
-			name:    "no headers returns default 30m",
+			name:    "no headers returns default",
 			headers: map[string]string{},
-			want:    30 * time.Minute,
+			want:    time.Hour,
 		},
 		{
 			name:    "max-age with other directives",
@@ -422,7 +422,7 @@ func TestParseCacheTTL(t *testing.T) {
 			for k, v := range tt.headers {
 				h.Set(k, v)
 			}
-			got := parseCacheTTL(h)
+			got := parseCacheTTL(h, time.Hour)
 			// Allow 2s tolerance for time-based tests
 			diff := got - tt.want
 			if diff < 0 {
@@ -1588,7 +1588,7 @@ func FuzzParseCacheTTL(f *testing.F) {
 	f.Fuzz(func(t *testing.T, cc string) {
 		h := http.Header{}
 		h.Set("Cache-Control", cc)
-		parseCacheTTL(h)
+		parseCacheTTL(h, time.Hour)
 	})
 }
 

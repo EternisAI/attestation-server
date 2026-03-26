@@ -36,8 +36,7 @@ const (
 	fetchRetryInitial = 500 * time.Millisecond
 	fetchRetryMax     = 5 * time.Second
 
-	fetchDefaultTTL = 30 * time.Minute
-	fetchMaxTTL     = 24 * time.Hour
+	fetchMaxTTL = 24 * time.Hour
 )
 
 // fetcherCache is a generic ristretto cache keyed by URL strings. It stores
@@ -121,8 +120,8 @@ func (s *Server) fetchHTTPClient() *http.Client {
 
 // parseCacheTTL extracts a TTL from HTTP response headers. It checks
 // Cache-Control for max-age and no-cache/no-store, falls back to the
-// Expires header, and defaults to 30 minutes. TTL is capped at 24 hours.
-func parseCacheTTL(header http.Header) time.Duration {
+// Expires header, and defaults to defaultTTL. TTL is capped at 24 hours.
+func parseCacheTTL(header http.Header, defaultTTL time.Duration) time.Duration {
 	if cc := header.Get("Cache-Control"); cc != "" {
 		lower := strings.ToLower(cc)
 		if strings.Contains(lower, "no-cache") || strings.Contains(lower, "no-store") {
@@ -161,7 +160,7 @@ func parseCacheTTL(header http.Header) time.Duration {
 		}
 	}
 
-	return fetchDefaultTTL
+	return defaultTTL
 }
 
 // fetchResult holds the result of fetching a single URL.
@@ -247,12 +246,14 @@ type cachedHTTPSGetterEntry struct {
 // cachedHTTPSGetter implements trust.HTTPSGetter with URL-keyed caching
 // backed by the shared ristretto fetcherCache. On cache hit the network is
 // skipped entirely. On miss the inner getter is called and the response is
-// cached with a TTL derived from the response headers (defaulting to 30 min
-// when no Cache-Control is present, which is the case for Intel PCS).
+// cached with a TTL derived from the response headers (defaulting to
+// http.cache.default_ttl when no Cache-Control is present, which is the case
+// for Intel PCS).
 type cachedHTTPSGetter struct {
-	inner  *simpleHTTPSGetter
-	cache  *fetcherCache
-	logger *slog.Logger
+	inner      *simpleHTTPSGetter
+	cache      *fetcherCache
+	logger     *slog.Logger
+	defaultTTL time.Duration
 }
 
 // simpleHTTPSGetter is a proxy-aware replacement for trust.SimpleHTTPSGetter.
@@ -298,7 +299,7 @@ func (g *cachedHTTPSGetter) Get(rawURL string) (map[string][]string, []byte, err
 		return nil, nil, err
 	}
 
-	ttl := parseCacheTTL(http.Header(header))
+	ttl := parseCacheTTL(http.Header(header), g.defaultTTL)
 	entry := &cachedHTTPSGetterEntry{header: header, body: body}
 	g.cache.setGroup([]string{rawURL}, entry, len(body), ttl)
 

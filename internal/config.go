@@ -47,6 +47,7 @@ type Config struct {
 	EndorsementClientTimeout  time.Duration
 	HTTPAllowProxy            bool
 	HTTPCacheSize             int64
+	HTTPCacheDefaultTTL       time.Duration
 	RevocationEnabled         bool
 	RevocationRefreshInterval time.Duration
 	RateLimitEnabled          bool
@@ -121,6 +122,10 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		httpCacheSize = 100 << 20
 	}
+	httpCacheDefaultTTL, err := time.ParseDuration(viper.GetString("http.cache.default_ttl"))
+	if err != nil {
+		httpCacheDefaultTTL = time.Hour
+	}
 
 	revocationRefreshInterval, err := time.ParseDuration(viper.GetString("revocation.refresh_interval"))
 	if err != nil {
@@ -172,6 +177,7 @@ func LoadConfig() (*Config, error) {
 		EndorsementClientTimeout:  endorsementTimeout,
 		HTTPAllowProxy:            viper.GetBool("http.allow_proxy"),
 		HTTPCacheSize:             httpCacheSize,
+		HTTPCacheDefaultTTL:       httpCacheDefaultTTL,
 		CosignVerify:              viper.GetBool("endorsements.cosign.verify"),
 		CosignURLSuffix:           viper.GetString("endorsements.cosign.url_suffix"),
 		CosignTUFCachePath:        viper.GetString("endorsements.cosign.tuf_cache_path"),

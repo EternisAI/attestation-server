@@ -291,9 +291,10 @@ func NewServer(cfg *Config, logger *slog.Logger) (*Server, error) {
 				s.httpCache = cache
 			}
 			s.tdxGetter = &cachedHTTPSGetter{
-				inner:  &simpleHTTPSGetter{client: s.fetchHTTPClient()},
-				cache:  s.httpCache,
-				logger: logger,
+				inner:      &simpleHTTPSGetter{client: s.fetchHTTPClient()},
+				cache:      s.httpCache,
+				defaultTTL: cfg.HTTPCacheDefaultTTL,
+				logger:     logger,
 			}
 			logger.Info("tdx collateral caching enabled")
 		}

@@ -126,13 +126,13 @@ func (s *Server) fetchCosignSignatures(ctx context.Context, urls []*url.URL, cli
 	// Use the most conservative (shortest) TTL across all responses
 	ttl := fetchMaxTTL
 	for _, r := range results {
-		t := parseCacheTTL(r.header)
+		t := parseCacheTTL(r.header, s.cfg.HTTPCacheDefaultTTL)
 		if t < ttl {
 			ttl = t
 		}
 	}
 	if ttl <= 0 {
-		ttl = fetchDefaultTTL
+		ttl = s.cfg.HTTPCacheDefaultTTL
 	}
 
 	return results[0].body, len(results[0].body), ttl, nil
